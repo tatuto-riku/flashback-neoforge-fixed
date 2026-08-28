@@ -1,7 +1,7 @@
 <p align="center"><img src="./images/icon.png" alt="Logo" width="200"></p>
 <h1 align="center">Flashback Neoforge Fixed<br>
 	<a href="https://www.curseforge.com/minecraft/mc-mods/flashback-neoforge-fixed"><img src="https://img.shields.io/curseforge/dt/flashback-neoforge-fixed?logo=curseforge&label=&suffix=%20&style=flat&color=242629&labelColor=F16436&logoColor=1C1C1C" alt="CurseForge"></a>
-    <a href="https://modrinth.com/mod/[]"><img src="https://img.shields.io/modrinth/dt/[]?logo=modrinth&label=&suffix=%20&style=flat&color=242629&labelColor=5CA424&logoColor=1C1C1C" alt="Modrinth"></a>
+    <a href="https://modrinth.com/mod/flashback-neoforge-fixed"><img src="https://img.shields.io/modrinth/dt/flashback-neoforge-fixed?logo=modrinth&label=&suffix=%20&style=flat&color=242629&labelColor=5CA424&logoColor=1C1C1C" alt="Modrinth"></a>
 </h1>
 
 Compatibility fixes for running [Flashback](https://modrinth.com/mod/flashback) on
@@ -15,7 +15,7 @@ Create: Aeronautics, Voxy, and several rendering integrations.
   <a href="https://www.curseforge.com/minecraft/mc-mods/flashback-neoforge-fixed">
     <img src="./images/curseforge.svg">
   </a>
-  <a href="https://modrinth.com/mod/[]">
+  <a href="https://modrinth.com/mod/flashback-neoforge-fixed">
     <img src="./images/modrinth.svg">
   </a>
 </p>
