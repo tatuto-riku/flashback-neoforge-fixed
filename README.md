@@ -11,16 +11,16 @@ Create: Aeronautics, Voxy, and several rendering integrations.
 
 <img src="./images/aeronautics.png">
 
-<h1 align="center">
+<p align="center">
   <a href="https://www.curseforge.com/minecraft/mc-mods/[]">
     <img src="./images/modrinth.svg">
   </a>
   <a href="https://modrinth.com/mod/[]">
     <img src="./images/curseforge.svg">
   </a>
-</h1>
+</p>
 
-<h1 style="border-bottom: none;">Requirements</h1>
+<h1>Requirements</h1>
 
 - Minecraft 1.21.1
 - NeoForge 21.1 or newer
@@ -30,9 +30,7 @@ Create: Aeronautics, Voxy, and several rendering integrations.
 
 Sable, Create, Voxy, and the other supported integrations are optional.
 
-<h1></h1>
-
-<h1 style="border-bottom: none;">Compatibility</h1>
+<h1>Compatibility</h1>
 
 <p align="center">
   <img src="./images/AERONAUTICS_BANNER.png" alt="Create: Aeronautics compatibility">
@@ -49,9 +47,7 @@ Sable, Create, Voxy, and the other supported integrations are optional.
   <br>Voxy replay storage and distant terrain rendering
 </p>
 
-<h1></h1>
-
-<h1 style="border-bottom: none;">Building</h1>
+<h1>Building</h1>
 
 Java 21 is required. This repository does not redistribute third-party mod jars.
 Before building, place these compile-only dependencies in `libs/`:
@@ -69,9 +65,7 @@ remapping cache. Then run:
 
 On Windows, use `gradlew.bat build`. The built mod is written to `build/libs/`.
 
-<h1></h1>
-
-<h1 style="border-bottom: none;">License</h1>
+<h1>License</h1>
 
 This project is available under the [MIT License](LICENSE).
 
