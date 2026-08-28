@@ -1,0 +1,33 @@
+# eclipse
+bin
+*.launch
+.settings
+.metadata
+.classpath
+.project
+
+# idea
+out
+*.ipr
+*.iws
+*.iml
+.idea
+
+# gradle
+build
+.gradle
+
+# other
+eclipse
+run
+runs
+run-data
+work
+.claude
+logs
+crash-reports
+
+# Third-party compile-only jars must be obtained from their original projects.
+libs/*.jar
+
+repo

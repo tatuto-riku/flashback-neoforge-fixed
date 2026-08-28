@@ -1,0 +1,46 @@
+modLoader="javafml" #mandatory
+loaderVersion="${loader_version_range}" #mandatory
+license="${mod_license}"
+
+[[mods]] #mandatory
+modId="${mod_id}" #mandatory
+version="${mod_version}" #mandatory
+displayName="${mod_name}" #mandatory
+authors="${mod_authors}" #optional
+description='''${mod_description}'''
+logoFile="flashback_neoforge_fixed.png"
+logoBlur=true
+
+[[mixins]]
+config="${mod_id}.mixins.json"
+
+[[dependencies.${mod_id}]]
+    modId="neoforge"
+    type="required"
+    versionRange="${neo_version_range}"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    type="required"
+    versionRange="${minecraft_version_range}"
+    ordering="NONE"
+    side="BOTH"
+
+# Flashback is loaded by Sinytra Connector under its Fabric modid; it isn't required
+# so this mod doesn't hard-crash if someone installs it without Flashback present.
+[[dependencies.${mod_id}]]
+    modId="flashback"
+    type="optional"
+    versionRange="[0.39.0,)"
+    ordering="AFTER"
+    side="CLIENT"
+
+# Optional: taps Sable's UDP transport so its physics data survives a recording.
+[[dependencies.${mod_id}]]
+    modId="sable"
+    type="optional"
+    versionRange="[2.0.0,)"
+    ordering="AFTER"
+    side="CLIENT"
