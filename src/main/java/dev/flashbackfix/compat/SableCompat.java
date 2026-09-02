@@ -214,6 +214,7 @@ public final class SableCompat {
 
             if (entity instanceof IEntityWithComplexSpawn) {
                 try {
+                    CreateContraptionSnapshotCompat.prepareForComplexSpawnSnapshot(entity);
                     AdvancedAddEntityPayload payload = new AdvancedAddEntityPayload(entity);
                     addModdedPayload(tasks, payload, true);
                 } catch (Exception e) {

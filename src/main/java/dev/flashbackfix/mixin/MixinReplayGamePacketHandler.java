@@ -2,6 +2,7 @@ package dev.flashbackfix.mixin;
 
 import com.moulberry.flashback.playback.ReplayGamePacketHandler;
 import com.moulberry.flashback.playback.ReplayServer;
+import dev.flashbackfix.compat.CreateContraptionSnapshotCompat;
 import dev.flashbackfix.compat.ReplayComplexSpawnPairing;
 import dev.flashbackfix.ext.ReplayGamePacketHandlerComplexSpawnExt;
 import dev.flashbackfix.ext.ReplayServerCatchupExt;
@@ -203,6 +204,7 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
                 Unpooled.wrappedBuffer(data), entity.registryAccess());
         try {
             complexSpawn.readSpawnData(buf);
+            CreateContraptionSnapshotCompat.prepareForComplexSpawnSnapshot(entity);
         } finally {
             buf.release();
         }

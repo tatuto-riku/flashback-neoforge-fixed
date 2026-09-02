@@ -39,7 +39,7 @@ Sable, Create, Voxy, and the other supported integrations are optional.
 
 <p align="center">
   <img src="./images/CREATE_BANNER.png" alt="Create compatibility">
-  <br>Create trains and elevators
+  <br>Create trains, elevators, and FramedBlocks camo on contraptions
 </p>
 
 <p align="center">

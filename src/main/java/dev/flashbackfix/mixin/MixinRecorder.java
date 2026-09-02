@@ -9,6 +9,7 @@ import dev.flashbackfix.action.ActionModdedPayload;
 import dev.flashbackfix.action.ActionRegistrySnapshot;
 import dev.flashbackfix.compat.SableCompat;
 import dev.flashbackfix.compat.BlockEntityPacketSnapshotCache;
+import dev.flashbackfix.compat.CreateContraptionSnapshotCompat;
 import dev.flashbackfix.compat.ModdedPayloadSnapshotCache;
 import java.util.ArrayList;
 import java.util.List;
@@ -233,6 +234,7 @@ public class MixinRecorder {
             }
 
             try {
+                CreateContraptionSnapshotCompat.prepareForComplexSpawnSnapshot(entity);
                 AdvancedAddEntityPayload payload = new AdvancedAddEntityPayload(entity);
                 ActionModdedPayload.EncodedPayload encoded =
                         ActionModdedPayload.capture(ConnectionProtocol.PLAY, payload);
