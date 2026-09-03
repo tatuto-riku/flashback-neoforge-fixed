@@ -27,6 +27,7 @@
     "MixinReplayServerPlayerList",
     "MixinReplayUISuperResolution",
     "MixinPlayerListReplayHooks",
+    "MixinReplayConfigurationPacketHandler",
     "MixinReplayServer",
     "MixinRecorder",
     "MixinRecorderVoxyStorage",
