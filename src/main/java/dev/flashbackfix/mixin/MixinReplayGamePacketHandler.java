@@ -112,19 +112,18 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
     }
 
     /**
-     * Keep server-side snapshot state, but send the recorded packet itself to viewers. Rebuilding a
-     * packet through the replay server loses mod fields which are decoded only when clientPacket=true
-     * (Create's ClientTarget/clientOffsetDiff is one example), producing block-entity animation steps.
+     * Send the recorded client update directly to viewers without decoding it in the replay server.
+     *
+     * <p>A {@link ClientboundBlockEntityDataPacket} contains a client update tag, not necessarily a
+     * server-persistence tag. Some modded block entities select their decoding path from that fact and
+     * perform client-only work while loading it. Applying such a tag to Flashback's server-side mirror
+     * can therefore crash (or partially mutate it) before the packet ever reaches the real client.
+     * The recorded packet is already the authoritative client state, so keep it opaque on the replay
+     * server and deliver the exact packet instead.</p>
      */
     @Inject(method = "handleBlockEntityData", at = @At("HEAD"), cancellable = true)
     private void flashbackNeoForgeFixed$preserveExactBlockEntityClientPacket(
             ClientboundBlockEntityDataPacket packet, CallbackInfo ci) {
-        ReplayGamePacketHandler handler = (ReplayGamePacketHandler) (Object) this;
-        handler.level().getBlockEntity(packet.getPos(), packet.getType()).ifPresent(blockEntity -> {
-            blockEntity.loadWithComponents(packet.getTag(), this.replayServer.registryAccess());
-            blockEntity.setChanged();
-        });
-
         var viewers = this.replayServer.getReplayViewers();
         if (this.replayServer.isProcessingSnapshot || viewers.isEmpty()) {
             ((ReplayServerCatchupExt) this.replayServer)
