@@ -18,10 +18,8 @@ import java.util.UUID;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.ConnectionProtocol;
-import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
-import net.neoforged.neoforge.network.registration.NetworkRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -67,19 +65,16 @@ public final class ModdedPayloadSnapshotCache {
         sequence = 0;
     }
 
-    public static synchronized void capture(CustomPacketPayload payload) {
+    public static synchronized void capture(
+            CustomPacketPayload payload, ActionModdedPayload.EncodedPayload encoded) {
         if (payload == null || Minecraft.getInstance().getSingleplayerServer() instanceof ReplayServer) {
             return;
         }
         ResourceLocation id = payload.type().id();
         if (shouldExclude(id)
-                || NetworkRegistry.getCodec(id, ConnectionProtocol.PLAY, PacketFlow.CLIENTBOUND) == null) {
-            return;
-        }
-
-        ActionModdedPayload.EncodedPayload encoded =
-                ActionModdedPayload.capture(ConnectionProtocol.PLAY, payload);
-        if (encoded == null) {
+                || encoded == null
+                || encoded.protocol() != ConnectionProtocol.PLAY
+                || !id.equals(encoded.id())) {
             return;
         }
 

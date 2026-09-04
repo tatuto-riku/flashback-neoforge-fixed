@@ -21,6 +21,7 @@
     "MixinGameRendererSuperResolutionImGui",
     "MixinMinecraftSuperResolutionImGui",
     "MixinMinecraftReplayInterpolation",
+    "MixinPacketDecoderPayloadCapture",
     "MixinClientLevelSableRiding",
     "MixinClientPacketListenerSableRiding",
     "MixinConnectionReplayEncoderFault",

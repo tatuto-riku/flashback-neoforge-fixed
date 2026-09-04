@@ -235,7 +235,7 @@ public final class SableCompat {
     private static void addModdedPayload(List<Consumer<ReplayWriter>> tasks,
             CustomPacketPayload payload, boolean forwarded) {
         ActionModdedPayload.EncodedPayload encoded =
-                ActionModdedPayload.capture(ConnectionProtocol.PLAY, payload);
+                ActionModdedPayload.encodeSynthetic(ConnectionProtocol.PLAY, payload);
         if (encoded == null) {
             return;
         }

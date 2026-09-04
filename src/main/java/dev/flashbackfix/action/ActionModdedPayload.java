@@ -70,21 +70,14 @@ public class ActionModdedPayload implements Action {
 
     private static final Set<ResourceLocation> loggedUnwritableTypes = Collections.synchronizedSet(new HashSet<>());
 
-    @SuppressWarnings("unchecked")
-    public static void write(ReplayWriter writer, ConnectionProtocol protocol, CustomPacketPayload payload) {
-        EncodedPayload encoded = capture(protocol, payload);
-        if (encoded != null) {
-            write(writer, encoded);
-        }
-    }
-
     /**
-     * Freezes a payload immediately. Some mods wrap a reference-counted FriendlyByteBuf whose reader
-     * index is consumed by the normal client handler; retaining the payload object for Flashback's
-     * asynchronous writer therefore records an empty tail instead of the packet that arrived.
+     * Encodes a newly synthesized payload immediately. Inbound payloads must use the immutable wire
+     * copy made by InboundPayloadCapture instead: received mod objects may contain a one-shot decoder
+     * whose buffer still belongs to their normal client handler.
      */
     @SuppressWarnings("unchecked")
-    public static EncodedPayload capture(ConnectionProtocol protocol, CustomPacketPayload payload) {
+    public static EncodedPayload encodeSynthetic(
+            ConnectionProtocol protocol, CustomPacketPayload payload) {
         ResourceLocation id = payload.type().id();
         StreamCodec<? super FriendlyByteBuf, ? extends CustomPacketPayload> codec =
                 NetworkRegistry.getCodec(id, protocol, PacketFlow.CLIENTBOUND);
@@ -112,7 +105,7 @@ public class ActionModdedPayload implements Action {
             encoded.getBytes(encoded.readerIndex(), bytes);
             return new EncodedPayload(protocol, id, bytes);
         } catch (RuntimeException exception) {
-            LOGGER.error("Failed to freeze payload {} while it was still readable; dropping it from the recording",
+            LOGGER.error("Failed to encode synthesized payload {}; dropping it from the recording",
                     id, exception);
             return null;
         } finally {

@@ -2,6 +2,7 @@ package dev.flashbackfix.mixin;
 
 import dev.flashbackfix.FlashbackNeoForgeFixed;
 import dev.flashbackfix.compat.BlockEntityPacketSnapshotCache;
+import dev.flashbackfix.compat.InboundPayloadCapture;
 import dev.flashbackfix.compat.ReplayAuthoritativeEntityCompat;
 import dev.flashbackfix.compat.ReplayCreateElevatorCompat;
 import dev.flashbackfix.compat.ReplayDeferredEntityPayloads;
@@ -113,6 +114,7 @@ public class MixinClientPacketListenerSableRiding {
     @Inject(method = "handleLogin", at = @At("HEAD"))
     private void flashbackNeoForgeFixed$resetRidingOnLogin(ClientboundLoginPacket packet, CallbackInfo ci) {
         ModdedPayloadSnapshotCache.reset();
+        InboundPayloadCapture.reset();
         BlockEntityPacketSnapshotCache.reset();
         ReplayAuthoritativeEntityCompat.reset();
         ReplayCreateElevatorCompat.reset();

@@ -1,6 +1,6 @@
 package dev.flashbackfix.mixin;
 
-import dev.flashbackfix.compat.ModdedPayloadSnapshotCache;
+import dev.flashbackfix.compat.InboundPayloadCapture;
 import dev.flashbackfix.compat.ReplayDeferredEntityPayloads;
 import net.minecraft.client.multiplayer.ClientCommonPacketListenerImpl;
 import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -19,8 +19,15 @@ public class MixinClientCommonPacketListenerModdedState {
     private void flashbackNeoForgeFixed$cacheModdedClientState(
             ClientboundCustomPayloadPacket packet, CallbackInfo ci) {
         if ((Object) this instanceof ClientPacketListener listener) {
-            ModdedPayloadSnapshotCache.capture(packet.payload());
-            if (ReplayDeferredEntityPayloads.defer(listener, packet)) {
+            boolean deferred;
+            try {
+                deferred = ReplayDeferredEntityPayloads.defer(listener, packet);
+            } finally {
+                // The snapshot cache and an active Recorder have both seen the immutable wire copy
+                // by this point. Forget only that association; never touch the mod's live payload.
+                InboundPayloadCapture.discard(packet.payload());
+            }
+            if (deferred) {
                 ci.cancel();
             }
         }

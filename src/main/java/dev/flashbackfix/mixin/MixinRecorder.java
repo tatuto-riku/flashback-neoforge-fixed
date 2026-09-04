@@ -10,6 +10,7 @@ import dev.flashbackfix.action.ActionRegistrySnapshot;
 import dev.flashbackfix.compat.SableCompat;
 import dev.flashbackfix.compat.BlockEntityPacketSnapshotCache;
 import dev.flashbackfix.compat.CreateContraptionSnapshotCompat;
+import dev.flashbackfix.compat.InboundPayloadCapture;
 import dev.flashbackfix.compat.ModdedPayloadSnapshotCache;
 import java.util.ArrayList;
 import java.util.List;
@@ -237,7 +238,7 @@ public class MixinRecorder {
                 CreateContraptionSnapshotCompat.prepareForComplexSpawnSnapshot(entity);
                 AdvancedAddEntityPayload payload = new AdvancedAddEntityPayload(entity);
                 ActionModdedPayload.EncodedPayload encoded =
-                        ActionModdedPayload.capture(ConnectionProtocol.PLAY, payload);
+                        ActionModdedPayload.encodeSynthetic(ConnectionProtocol.PLAY, payload);
                 if (encoded != null) {
                     tasks.add(writer -> ActionModdedPayload.write(writer, encoded));
                 }
@@ -270,8 +271,10 @@ public class MixinRecorder {
         if (packet instanceof ClientboundCustomPayloadPacket customPayloadPacket) {
             CustomPacketPayload payload = customPayloadPacket.payload();
             if (NetworkRegistry.getCodec(payload.type().id(), phase, PacketFlow.CLIENTBOUND) != null) {
-                // Freeze before the real client handler can consume a buffer retained by the payload.
-                ActionModdedPayload.EncodedPayload encoded = ActionModdedPayload.capture(phase, payload);
+                // Use the immutable bytes copied by PacketDecoder. Re-encoding a received payload
+                // can consume a lazy/one-shot buffer that its actual client handler still needs.
+                ActionModdedPayload.EncodedPayload encoded =
+                        InboundPayloadCapture.get(payload, phase);
                 if (encoded == null) {
                     return;
                 }

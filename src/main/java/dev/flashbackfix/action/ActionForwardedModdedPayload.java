@@ -35,14 +35,6 @@ public final class ActionForwardedModdedPayload implements Action {
         return NAME;
     }
 
-    @SuppressWarnings("unchecked")
-    public static void write(ReplayWriter writer, ConnectionProtocol protocol, CustomPacketPayload payload) {
-        ActionModdedPayload.EncodedPayload encoded = ActionModdedPayload.capture(protocol, payload);
-        if (encoded != null) {
-            write(writer, encoded);
-        }
-    }
-
     public static void write(ReplayWriter writer, ActionModdedPayload.EncodedPayload payload) {
         writer.startAction(INSTANCE);
         RegistryFriendlyByteBuf buf = writer.friendlyByteBuf();
