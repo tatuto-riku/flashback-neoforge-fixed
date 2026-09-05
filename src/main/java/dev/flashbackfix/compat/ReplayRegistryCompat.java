@@ -4,6 +4,8 @@ import com.moulberry.flashback.playback.ReplayServer;
 import com.moulberry.flashback.record.FlashbackMeta;
 import dev.flashbackfix.ext.ReplayServerRegistryExt;
 import io.netty.buffer.Unpooled;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -13,6 +15,7 @@ import java.util.Set;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.neoforge.registries.RegistryManager;
 import net.neoforged.neoforge.registries.RegistrySnapshot;
@@ -24,8 +27,47 @@ public final class ReplayRegistryCompat {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("FlashbackNeoForgeFixed");
     private static final Set<String> BASE_NAMESPACES = Set.of("minecraft", "brigadier");
+    private static final Method APPLY_SNAPSHOT = findApplySnapshot();
 
     private ReplayRegistryCompat() {
+    }
+
+    private static Method findApplySnapshot() {
+        try {
+            return RegistryManager.class.getMethod("applySnapshot", Map.class, boolean.class);
+        } catch (NoSuchMethodException ignored) {
+            try {
+                // NeoForge 21.1.172 and earlier 21.1 builds also expose allowMissing.
+                return RegistryManager.class.getMethod(
+                        "applySnapshot", Map.class, boolean.class, boolean.class);
+            } catch (NoSuchMethodException exception) {
+                throw new IllegalStateException(
+                        "Unsupported NeoForge RegistryManager.applySnapshot signature", exception);
+            }
+        }
+    }
+
+    /** Applies a replay snapshot across both NeoForge 21.1 registry API variants. */
+    @SuppressWarnings("unchecked")
+    public static Set<ResourceKey<?>> applySnapshot(
+            Map<ResourceLocation, RegistrySnapshot> snapshots) {
+        try {
+            Object result = APPLY_SNAPSHOT.getParameterCount() == 2
+                    ? APPLY_SNAPSHOT.invoke(null, snapshots, false)
+                    : APPLY_SNAPSHOT.invoke(null, snapshots, false, false);
+            return (Set<ResourceKey<?>>) result;
+        } catch (IllegalAccessException exception) {
+            throw new IllegalStateException("Cannot access NeoForge registry snapshot API", exception);
+        } catch (InvocationTargetException exception) {
+            Throwable cause = exception.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (cause instanceof Error error) {
+                throw error;
+            }
+            throw new IllegalStateException("NeoForge registry snapshot application failed", cause);
+        }
     }
 
     /**

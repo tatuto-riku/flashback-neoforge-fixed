@@ -103,7 +103,7 @@ public class MixinReplayServer implements ReplayServerComplexSpawnExt, ReplaySer
             applicable.put(entry.getKey(), entry.getValue());
         }
 
-        var missing = RegistryManager.applySnapshot(applicable, false);
+        var missing = ReplayRegistryCompat.applySnapshot(applicable);
         if (!missing.isEmpty()) {
             throw new IllegalStateException("Replay registry snapshot contains unavailable entries: " + missing);
         }

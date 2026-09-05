@@ -12,9 +12,11 @@ import org.spongepowered.asm.mixin.injection.At;
 @Mixin(PlayerList.class)
 public abstract class MixinPlayerListReplayHooks {
 
+    // Attachment synchronization was added during the NeoForge 21.1 lifecycle. Older supported
+    // builds have no such call to suppress, so absence of this invocation must not reject the mixin.
     @WrapWithCondition(method = "placeNewPlayer", at = @At(value = "INVOKE",
             target = "Lnet/neoforged/neoforge/attachment/AttachmentSync;syncInitialPlayerAttachments(Lnet/minecraft/server/level/ServerPlayer;)V",
-            remap = false))
+            remap = false), require = 0)
     private boolean flashbackNeoForgeFixed$skipFakePlayerAttachmentLogin(ServerPlayer player) {
         return !flashbackNeoForgeFixed$isReplayServerPlayer(player);
     }
