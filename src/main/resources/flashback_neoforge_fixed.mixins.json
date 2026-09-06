@@ -27,6 +27,7 @@
     "MixinConnectionReplayEncoderFault",
     "MixinReplayServerPlayerList",
     "MixinReplayUISuperResolution",
+    "MixinReplayUILoadFont",
     "MixinPlayerListReplayHooks",
     "MixinReplayConfigurationPacketHandler",
     "MixinReplayServer",
