@@ -7,7 +7,10 @@ import dev.flashbackfix.compat.ReplayComplexSpawnPairing;
 import dev.flashbackfix.ext.ReplayGamePacketHandlerComplexSpawnExt;
 import dev.flashbackfix.ext.ReplayServerCatchupExt;
 import io.netty.buffer.Unpooled;
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -19,6 +22,7 @@ import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.neoforged.neoforge.entity.IEntityWithComplexSpawn;
@@ -27,8 +31,10 @@ import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
@@ -43,6 +49,9 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
     private static final Set<String> LOGGED_ENTITY_DATA_SCHEMA_MISMATCHES =
             ConcurrentHashMap.newKeySet();
 
+    @Unique
+    private Set<Entity> flashbackNeoForgeFixed$deferredComplexSpawns;
+
     @Shadow
     @Final
     private ReplayServer replayServer;
@@ -53,8 +62,95 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
     }
 
     @Shadow
+    public void flushPendingEntities() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Shadow
+    private Int2ObjectMap<Entity> pendingEntities;
+
+    @Shadow
     private void forward(Entity entity, Packet<?> packet) {
         throw new UnsupportedOperationException();
+    }
+
+    @Unique
+    private Set<Entity> flashbackNeoForgeFixed$deferredComplexSpawns() {
+        if (this.flashbackNeoForgeFixed$deferredComplexSpawns == null) {
+            this.flashbackNeoForgeFixed$deferredComplexSpawns =
+                    Collections.newSetFromMap(new IdentityHashMap<>());
+        }
+        return this.flashbackNeoForgeFixed$deferredComplexSpawns;
+    }
+
+    /**
+     * A mod may inspect an entity during addFreshEntity before NeoForge sends pairing data. Keep an
+     * uninitialized complex-spawn entity pending until its recorded AdvancedAddEntityPayload arrives.
+     */
+    @Redirect(method = "flushPendingEntities", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/server/level/ServerLevel;addFreshEntity(Lnet/minecraft/world/entity/Entity;)Z"))
+    private boolean flashbackNeoForgeFixed$deferUninitializedComplexSpawn(
+            ServerLevel level, Entity entity) {
+        if (entity instanceof IEntityWithComplexSpawn complexSpawn) {
+            try {
+                flashbackNeoForgeFixed$validateComplexSpawnRoundTrip(entity, complexSpawn);
+            } catch (RuntimeException exception) {
+                if (this.flashbackNeoForgeFixed$deferredComplexSpawns().add(entity)) {
+                    LOGGER.warn("Deferring replay entity {} ({}) until its complex spawn data arrives: {}",
+                            entity.getId(), entity.getType(), exception.toString());
+                }
+                return false;
+            }
+        }
+
+        this.flashbackNeoForgeFixed$deferredComplexSpawns().remove(entity);
+        return level.addFreshEntity(entity);
+    }
+
+    /** Flashback normally clears every pending entity even when insertion was deliberately deferred. */
+    @Redirect(method = "flushPendingEntities", at = @At(value = "INVOKE",
+            target = "Lit/unimi/dsi/fastutil/ints/Int2ObjectMap;clear()V"))
+    private void flashbackNeoForgeFixed$retainDeferredComplexSpawns(
+            Int2ObjectMap<Entity> pendingEntities) {
+        Set<Entity> deferred = this.flashbackNeoForgeFixed$deferredComplexSpawns();
+        if (deferred.isEmpty()) {
+            pendingEntities.clear();
+            return;
+        }
+        pendingEntities.int2ObjectEntrySet().removeIf(
+                entry -> !deferred.contains(entry.getValue()));
+        deferred.retainAll(pendingEntities.values());
+    }
+
+    /** Proves that pairing bytes can be decoded by a fresh client-side-shaped entity. */
+    @Unique
+    private static void flashbackNeoForgeFixed$validateComplexSpawnRoundTrip(
+            Entity entity, IEntityWithComplexSpawn complexSpawn) {
+        byte[] data;
+        RegistryFriendlyByteBuf encoded = new RegistryFriendlyByteBuf(
+                Unpooled.buffer(), entity.registryAccess());
+        try {
+            complexSpawn.writeSpawnData(encoded);
+            data = new byte[encoded.readableBytes()];
+            encoded.getBytes(encoded.readerIndex(), data);
+        } finally {
+            encoded.release();
+        }
+
+        Entity probe = entity.getType().create(entity.level());
+        if (!(probe instanceof IEntityWithComplexSpawn probeComplexSpawn)) {
+            throw new IllegalStateException(
+                    "Could not create a validation entity for " + entity.getType());
+        }
+        flashbackNeoForgeFixed$readComplexSpawnData(probe, probeComplexSpawn, data);
+
+        RegistryFriendlyByteBuf reencoded = new RegistryFriendlyByteBuf(
+                Unpooled.buffer(), probe.registryAccess());
+        try {
+            probeComplexSpawn.writeSpawnData(reencoded);
+        } finally {
+            reencoded.release();
+        }
     }
 
     /**
@@ -157,6 +253,7 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
 
     @Override
     public Entity flashbackNeoForgeFixed$applyComplexSpawnData(int entityId, byte[] data) {
+        boolean wasPending = this.pendingEntities.containsKey(entityId);
         Entity entity = this.getEntityOrPending(entityId);
         if (!(entity instanceof IEntityWithComplexSpawn complexSpawn)) {
             LOGGER.warn("No IEntityWithComplexSpawn entity {} found for recorded complex spawn data (got {})", entityId, entity);
@@ -188,9 +285,18 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
 
             flashbackNeoForgeFixed$readComplexSpawnData(entity, complexSpawn, data);
             ReplayComplexSpawnPairing.clearInvalid(entity);
+            this.flashbackNeoForgeFixed$deferredComplexSpawns().remove(entity);
+            if (wasPending && this.pendingEntities.get(entityId) == entity) {
+                this.flushPendingEntities();
+            }
             return entity;
         } catch (Exception e) {
             ReplayComplexSpawnPairing.blockInvalid(entity);
+            this.flashbackNeoForgeFixed$deferredComplexSpawns().remove(entity);
+            if (wasPending && this.pendingEntities.get(entityId) == entity) {
+                this.pendingEntities.remove(entityId);
+            }
+            entity.discard();
             LOGGER.error("Rejected invalid or incompatible complex spawn data for entity {} before replay pairing",
                     entity, e);
             return null;

@@ -1,5 +1,6 @@
 package dev.flashbackfix.mixin;
 
+import com.moulberry.flashback.io.AsyncReplaySaver;
 import com.moulberry.flashback.io.ReplayWriter;
 import com.moulberry.flashback.record.Recorder;
 import dev.flashbackfix.FlashbackNeoForgeFixed;
@@ -12,21 +13,25 @@ import dev.flashbackfix.compat.BlockEntityPacketSnapshotCache;
 import dev.flashbackfix.compat.CreateContraptionSnapshotCompat;
 import dev.flashbackfix.compat.InboundPayloadCapture;
 import dev.flashbackfix.compat.ModdedPayloadSnapshotCache;
+import io.netty.buffer.ByteBuf;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Queue;
+import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.network.ConnectionProtocol;
+import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.network.protocol.configuration.ClientConfigurationPacketListener;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundAddExperienceOrbPacket;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
@@ -73,11 +78,11 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * Records two kinds of things Flashback's normal packet recording can't handle, both written through
- * Flashback's action system (bypassing its packet queue) so they land in the replay file at all:
+ * Records two kinds of things Flashback's normal packet codec can't handle, both written through
+ * Flashback's action system so they land in the replay file at all. Live packets remain in the
+ * pending queue as ordering placeholders, then are replaced with their custom actions at flush time:
  * <p>
  * 1. Modded custom payloads (ActionModdedPayload) - Flashback's packet codec is built straight from
  * vanilla's GameProtocols, which only knows a hardcoded list of vanilla debug custom-payloads, so any
@@ -103,7 +108,8 @@ public class MixinRecorder {
     private static final Logger LOGGER = LoggerFactory.getLogger("FlashbackNeoForgeFixed");
 
     @Unique
-    private volatile Queue<Consumer<ReplayWriter>> flashbackNeoForgeFixed$liveWriteTasks;
+    private volatile Map<Packet<?>, Consumer<ReplayWriter>>
+            flashbackNeoForgeFixed$orderedPacketWrites;
 
     /** Entity ids whose authoritative replay copy lives in Sable's remote plot grid on the viewer. */
     @Unique
@@ -158,14 +164,15 @@ public class MixinRecorder {
     // on Netty and render threads, so initialize both collections lazily under a small synchronized
     // section instead of assuming an inline initializer has run.
     @Unique
-    private Queue<Consumer<ReplayWriter>> flashbackNeoForgeFixed$liveWriteTasks() {
-        Queue<Consumer<ReplayWriter>> tasks = this.flashbackNeoForgeFixed$liveWriteTasks;
+    private Map<Packet<?>, Consumer<ReplayWriter>> flashbackNeoForgeFixed$orderedPacketWrites() {
+        Map<Packet<?>, Consumer<ReplayWriter>> tasks =
+                this.flashbackNeoForgeFixed$orderedPacketWrites;
         if (tasks == null) {
             synchronized (this) {
-                tasks = this.flashbackNeoForgeFixed$liveWriteTasks;
+                tasks = this.flashbackNeoForgeFixed$orderedPacketWrites;
                 if (tasks == null) {
-                    tasks = new ConcurrentLinkedQueue<>();
-                    this.flashbackNeoForgeFixed$liveWriteTasks = tasks;
+                    tasks = Collections.synchronizedMap(new IdentityHashMap<>());
+                    this.flashbackNeoForgeFixed$orderedPacketWrites = tasks;
                 }
             }
         }
@@ -264,10 +271,12 @@ public class MixinRecorder {
         flashbackNeoForgeFixed$submit((Recorder) (Object) this, tasks);
     }
 
-    // Only redirect packets that need the special "send straight to the viewer" treatment; anything
-    // else is left to the normal packet queue exactly as before.
-    @Inject(method = "writePacketAsync", at = @At("HEAD"), cancellable = true)
-    private void flashbackNeoForgeFixed$captureLiveModdedPayload(Packet<?> packet, ConnectionProtocol phase, CallbackInfo ci) {
+    // Mark packets that need a custom replay action while leaving them in Flashback's queue as
+    // ordering placeholders. The flush redirects below remove them from the vanilla codec batch.
+    @Inject(method = "writePacketAsync", at = @At(value = "INVOKE",
+            target = "Ljava/util/Queue;add(Ljava/lang/Object;)Z"))
+    private void flashbackNeoForgeFixed$captureLiveModdedPayload(
+            Packet<?> packet, ConnectionProtocol phase, CallbackInfo ci) {
         if (packet instanceof ClientboundCustomPayloadPacket customPayloadPacket) {
             CustomPacketPayload payload = customPayloadPacket.payload();
             if (NetworkRegistry.getCodec(payload.type().id(), phase, PacketFlow.CLIENTBOUND) != null) {
@@ -281,13 +290,12 @@ public class MixinRecorder {
                 if (FlashbackNeoForgeFixed.isSableLoaded
                         && payload instanceof AdvancedAddEntityPayload advancedPayload
                         && this.flashbackNeoForgeFixed$plotEntityIds().contains(advancedPayload.entityId())) {
-                    this.flashbackNeoForgeFixed$liveWriteTasks().add(
+                    this.flashbackNeoForgeFixed$orderedPacketWrites().put(packet,
                             writer -> ActionForwardedModdedPayload.write(writer, encoded));
                 } else {
-                    this.flashbackNeoForgeFixed$liveWriteTasks().add(
+                    this.flashbackNeoForgeFixed$orderedPacketWrites().put(packet,
                             writer -> ActionModdedPayload.write(writer, encoded));
                 }
-                ci.cancel();
             }
             return;
         }
@@ -295,9 +303,8 @@ public class MixinRecorder {
         if (FlashbackNeoForgeFixed.isSableLoaded && this.flashbackNeoForgeFixed$isDirectSablePacket(packet)) {
             @SuppressWarnings("unchecked")
             Packet<? super ClientGamePacketListener> gamePacket = (Packet<? super ClientGamePacketListener>) packet;
-            this.flashbackNeoForgeFixed$liveWriteTasks().add(
+            this.flashbackNeoForgeFixed$orderedPacketWrites().put(packet,
                     writer -> ActionForwardedGamePacket.write(writer, gamePacket));
-            ci.cancel();
         }
     }
 
@@ -463,19 +470,49 @@ public class MixinRecorder {
         return chunk;
     }
 
-    @Inject(method = "flushPackets", at = @At("TAIL"))
-    private void flashbackNeoForgeFixed$flushLiveWriteTasks(CallbackInfoReturnable<Boolean> cir) {
-        Queue<Consumer<ReplayWriter>> liveWriteTasks = this.flashbackNeoForgeFixed$liveWriteTasks();
-        if (liveWriteTasks.isEmpty()) {
-            return;
-        }
+    @Redirect(method = "flushPackets", at = @At(value = "INVOKE",
+            target = "Lcom/moulberry/flashback/io/AsyncReplaySaver;writeGamePackets(Lnet/minecraft/network/codec/StreamCodec;Ljava/util/List;)V"))
+    private void flashbackNeoForgeFixed$writeGamePacketsInOriginalOrder(
+            AsyncReplaySaver saver,
+            StreamCodec<ByteBuf, Packet<? super ClientGamePacketListener>> codec,
+            List<Packet<? super ClientGamePacketListener>> packets) {
+        this.flashbackNeoForgeFixed$writePacketsInOriginalOrder(
+                saver, packets, batch -> saver.writeGamePackets(codec, batch));
+    }
 
-        List<Consumer<ReplayWriter>> tasks = new ArrayList<>();
-        Consumer<ReplayWriter> task;
-        while ((task = liveWriteTasks.poll()) != null) {
-            tasks.add(task);
+    @Redirect(method = "flushPackets", at = @At(value = "INVOKE",
+            target = "Lcom/moulberry/flashback/io/AsyncReplaySaver;writeConfigurationPackets(Lnet/minecraft/network/codec/StreamCodec;Ljava/util/List;)V"))
+    private void flashbackNeoForgeFixed$writeConfigurationPacketsInOriginalOrder(
+            AsyncReplaySaver saver,
+            StreamCodec<ByteBuf, Packet<? super ClientConfigurationPacketListener>> codec,
+            List<Packet<? super ClientConfigurationPacketListener>> packets) {
+        this.flashbackNeoForgeFixed$writePacketsInOriginalOrder(
+                saver, packets, batch -> saver.writeConfigurationPackets(codec, batch));
+    }
+
+    /** Splits Flashback's batch only at packets represented by a custom replay action. */
+    @Unique
+    private <T extends Packet<?>> void flashbackNeoForgeFixed$writePacketsInOriginalOrder(
+            AsyncReplaySaver saver, List<T> packets, Consumer<List<T>> writeVanillaBatch) {
+        List<T> vanillaBatch = new ArrayList<>();
+        Map<Packet<?>, Consumer<ReplayWriter>> orderedWrites =
+                this.flashbackNeoForgeFixed$orderedPacketWrites();
+        for (T packet : packets) {
+            Consumer<ReplayWriter> customWrite = orderedWrites.remove(packet);
+            if (customWrite == null) {
+                vanillaBatch.add(packet);
+                continue;
+            }
+
+            if (!vanillaBatch.isEmpty()) {
+                writeVanillaBatch.accept(List.copyOf(vanillaBatch));
+                vanillaBatch.clear();
+            }
+            saver.submit(customWrite);
         }
-        flashbackNeoForgeFixed$submit((Recorder) (Object) this, tasks);
+        if (!vanillaBatch.isEmpty()) {
+            writeVanillaBatch.accept(List.copyOf(vanillaBatch));
+        }
     }
 
     @Unique
