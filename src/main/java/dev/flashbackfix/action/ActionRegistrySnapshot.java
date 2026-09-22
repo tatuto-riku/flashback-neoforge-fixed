@@ -41,15 +41,8 @@ public final class ActionRegistrySnapshot implements Action {
                 RegistryManager.takeSnapshot(RegistryManager.SnapshotType.SYNC_TO_CLIENT);
         List<Map.Entry<ResourceLocation, RegistrySnapshot>> entries =
                 new ArrayList<>(snapshots.entrySet());
-        entries.removeIf(entry -> {
-            boolean invalid = entry.getValue().getIds().int2ObjectEntrySet().stream()
-                    .anyMatch(id -> id.getIntKey() < 0 || id.getValue() == null);
-            if (invalid) {
-                LOGGER.warn("Not recording structurally invalid NeoForge registry snapshot {}",
-                        entry.getKey());
-            }
-            return invalid;
-        });
+        entries.replaceAll(entry -> Map.entry(
+                entry.getKey(), sanitize(entry.getKey(), entry.getValue())));
         entries.sort(Map.Entry.comparingByKey(Comparator.naturalOrder()));
 
         FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
@@ -71,6 +64,45 @@ public final class ActionRegistrySnapshot implements Action {
         writer.startAction(INSTANCE);
         writer.friendlyByteBuf().writeBytes(snapshot);
         writer.finishAction(INSTANCE);
+    }
+
+    /**
+     * A few mods leave registered keys without a numeric ID. NeoForge represents those entries as
+     * {@code -1}; because the snapshot map has the raw ID as its key, they cannot carry a useful
+     * packet mapping. Preserve every valid mapping instead of discarding the whole registry.
+     */
+    private static RegistrySnapshot sanitize(
+            ResourceLocation registryName, RegistrySnapshot snapshot) {
+        int invalidEntries = (int) snapshot.getIds().int2ObjectEntrySet().stream()
+                .filter(entry -> entry.getIntKey() < 0 || entry.getValue() == null)
+                .count();
+        if (invalidEntries == 0) {
+            return snapshot;
+        }
+
+        FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
+        try {
+            int validEntries = snapshot.getIds().size() - invalidEntries;
+            buf.writeVarInt(validEntries);
+            for (var entry : snapshot.getIds().int2ObjectEntrySet()) {
+                if (entry.getIntKey() >= 0 && entry.getValue() != null) {
+                    buf.writeVarInt(entry.getIntKey());
+                    buf.writeResourceLocation(entry.getValue());
+                }
+            }
+            buf.writeVarInt(snapshot.getAliases().size());
+            for (var alias : snapshot.getAliases().entrySet()) {
+                buf.writeResourceLocation(alias.getKey());
+                buf.writeResourceLocation(alias.getValue());
+            }
+            RegistrySnapshot sanitized = RegistrySnapshot.STREAM_CODEC.decode(buf);
+            LOGGER.warn("Removed {} unmapped entry from NeoForge registry snapshot {}; "
+                            + "preserved {} numeric mappings",
+                    invalidEntries, registryName, validEntries);
+            return sanitized;
+        } finally {
+            buf.release();
+        }
     }
 
     @Override

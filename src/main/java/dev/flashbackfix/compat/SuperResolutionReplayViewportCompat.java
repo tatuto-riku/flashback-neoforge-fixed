@@ -1,7 +1,7 @@
 package dev.flashbackfix.compat;
 
-import com.moulberry.flashback.WindowSizeTracker;
-import com.moulberry.flashback.editor.ui.ReplayUI;
+import com.mojang.blaze3d.platform.Window;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import net.minecraft.client.Minecraft;
 import net.neoforged.fml.ModList;
@@ -13,6 +13,18 @@ public final class SuperResolutionReplayViewportCompat {
     private static Method isHackSelected;
     private static Method getCurrentScaleFactor;
     private static boolean hackSelected;
+
+    // Window#getWidth/getHeight is queried while Minecraft itself is still being constructed. Keep
+    // every Flashback symbol behind reflection so this optional integration remains inert when
+    // Flashback is absent (or Connector has not made its classes visible yet).
+    private static volatile boolean replayUiReflectionResolved;
+    private static Method shouldModifyViewport;
+    private static Method getTrackedWidth;
+    private static Method getTrackedHeight;
+    private static Field viewportSizeX;
+    private static Field viewportSizeY;
+    private static Field frameWidth;
+    private static Field frameHeight;
 
     private SuperResolutionReplayViewportCompat() {
     }
@@ -33,23 +45,11 @@ public final class SuperResolutionReplayViewportCompat {
     }
 
     public static int getReplayOutputWidth() {
-        if (!ReplayUI.shouldModifyViewport()) {
-            return 0;
-        }
-        var window = Minecraft.getInstance().getWindow();
-        float framebufferScale = WindowSizeTracker.getWidth(window)
-                / (float) Math.max(1, ReplayUI.viewportSizeX);
-        return Math.max(1, Math.round(ReplayUI.frameWidth * framebufferScale));
+        return getReplayOutputSize(true);
     }
 
     public static int getReplayOutputHeight() {
-        if (!ReplayUI.shouldModifyViewport()) {
-            return 0;
-        }
-        var window = Minecraft.getInstance().getWindow();
-        float framebufferScale = WindowSizeTracker.getHeight(window)
-                / (float) Math.max(1, ReplayUI.viewportSizeY);
-        return Math.max(1, Math.round(ReplayUI.frameHeight * framebufferScale));
+        return getReplayOutputSize(false);
     }
 
     /**
@@ -88,6 +88,76 @@ public final class SuperResolutionReplayViewportCompat {
         } catch (ReflectiveOperationException | RuntimeException ignored) {
         }
         return 1.0F;
+    }
+
+    private static int getReplayOutputSize(boolean width) {
+        Minecraft minecraft = Minecraft.getInstance();
+        Window window = minecraft == null ? null : minecraft.getWindow();
+        if (window == null) {
+            return 0;
+        }
+
+        resolveReplayUiReflection();
+        if (shouldModifyViewport == null) {
+            return 0;
+        }
+
+        try {
+            if (!Boolean.TRUE.equals(shouldModifyViewport.invoke(null))) {
+                return 0;
+            }
+            Method trackedSizeMethod = width ? getTrackedWidth : getTrackedHeight;
+            Field viewportSizeField = width ? viewportSizeX : viewportSizeY;
+            Field frameSizeField = width ? frameWidth : frameHeight;
+            int trackedSize = ((Number) trackedSizeMethod.invoke(null, window)).intValue();
+            int viewportSize = ((Number) viewportSizeField.get(null)).intValue();
+            int frameSize = ((Number) frameSizeField.get(null)).intValue();
+            float framebufferScale = trackedSize / (float) Math.max(1, viewportSize);
+            return Math.max(1, Math.round(frameSize * framebufferScale));
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+            // A changed or partially transformed Flashback must disable only this optional bridge,
+            // never the base game. Do not retry reflective calls on every Window size query.
+            clearReplayUiReflection();
+            return 0;
+        }
+    }
+
+    private static void resolveReplayUiReflection() {
+        if (replayUiReflectionResolved) {
+            return;
+        }
+        synchronized (SuperResolutionReplayViewportCompat.class) {
+            if (replayUiReflectionResolved) {
+                return;
+            }
+            try {
+                Class<?> replayUi = Class.forName(
+                        "com.moulberry.flashback.editor.ui.ReplayUI");
+                Class<?> windowSizeTracker = Class.forName(
+                        "com.moulberry.flashback.WindowSizeTracker");
+                shouldModifyViewport = replayUi.getMethod("shouldModifyViewport");
+                viewportSizeX = replayUi.getField("viewportSizeX");
+                viewportSizeY = replayUi.getField("viewportSizeY");
+                frameWidth = replayUi.getField("frameWidth");
+                frameHeight = replayUi.getField("frameHeight");
+                getTrackedWidth = windowSizeTracker.getMethod("getWidth", Window.class);
+                getTrackedHeight = windowSizeTracker.getMethod("getHeight", Window.class);
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+                clearReplayUiReflection();
+            } finally {
+                replayUiReflectionResolved = true;
+            }
+        }
+    }
+
+    private static void clearReplayUiReflection() {
+        shouldModifyViewport = null;
+        getTrackedWidth = null;
+        getTrackedHeight = null;
+        viewportSizeX = null;
+        viewportSizeY = null;
+        frameWidth = null;
+        frameHeight = null;
     }
 
     private static void resolveReflection() {

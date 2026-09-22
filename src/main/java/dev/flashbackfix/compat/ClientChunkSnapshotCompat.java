@@ -1,7 +1,6 @@
 package dev.flashbackfix.compat;
 
 import java.util.function.Supplier;
-import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import org.slf4j.Logger;
@@ -36,12 +35,12 @@ public final class ClientChunkSnapshotCompat {
      * the block entity with an empty tag is safer than losing the complete physicalized structure.
      */
     public static CompoundTag getUpdateTag(
-            BlockEntity blockEntity, HolderLookup.Provider registries) {
+            BlockEntity blockEntity, Supplier<CompoundTag> original) {
         if (CAPTURE_DEPTH.get() == 0) {
-            return blockEntity.getUpdateTag(registries);
+            return original.get();
         }
         try {
-            return blockEntity.getUpdateTag(registries);
+            return original.get();
         } catch (RuntimeException exception) {
             LOGGER.warn("Using an empty client snapshot tag for block entity {} at {} because its "
                             + "server-only serializer failed: {}",
