@@ -223,6 +223,14 @@ public class ActionModdedPayload implements Action {
             return;
         }
 
+        // A seek handles the snapshot and then fast-forwards its timeline before tick-tail sends
+        // the snapshot backlog to the physical client. Keep those timeline payloads behind the
+        // backlog; Sable movement received before StartTracking is irrecoverably discarded.
+        if (((ReplayServerCatchupExt) replayServer)
+                .flashbackNeoForgeFixed$deferUntilSnapshotDelivered(packet)) {
+            return;
+        }
+
         for (ServerPlayer viewer : viewers) {
             viewer.connection.send(packet);
         }

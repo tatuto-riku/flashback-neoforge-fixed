@@ -6,26 +6,37 @@ import com.moulberry.flashback.io.ReplayWriter;
 import dev.flashbackfix.action.ActionForwardedGamePacket;
 import dev.flashbackfix.action.ActionForwardedModdedPayload;
 import dev.flashbackfix.action.ActionModdedPayload;
+import dev.flashbackfix.ext.SableInterpolationStateExt;
+import dev.flashbackfix.mixin.InvokerSableSnapshotDualPacket;
+import dev.ryanhcode.sable.SableClient;
 import dev.ryanhcode.sable.api.sublevel.ClientSubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.companion.math.Pose3d;
 import dev.ryanhcode.sable.mixinterface.entity.entities_stick_sublevels.packet_mixin.PacketActuallyInSubLevelExtension;
+import dev.ryanhcode.sable.network.packets.ClientboundSableSnapshotDualPacket;
+import dev.ryanhcode.sable.network.packets.PacketReceiveMode;
 import dev.ryanhcode.sable.network.packets.tcp.ClientboundFinalizeSubLevelPacket;
 import dev.ryanhcode.sable.network.packets.tcp.ClientboundStartTrackingSubLevelPacket;
 import dev.ryanhcode.sable.sublevel.ClientSubLevel;
 import dev.ryanhcode.sable.sublevel.plot.ClientLevelPlot;
 import dev.ryanhcode.sable.sublevel.plot.PlotChunkHolder;
+import dev.ryanhcode.sable.sublevel.storage.SubLevelRemovalReason;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.ConnectionProtocol;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.common.ClientboundPingPacket;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
@@ -65,6 +76,20 @@ public final class SableCompat {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("FlashbackNeoForgeFixed");
 
+    /** ReplayServer and the physical replay client share a JVM but run on different threads. */
+    private static final AtomicLong REPLAY_SNAPSHOT_GENERATION = new AtomicLong();
+    private static final ConcurrentHashMap<Integer, Long> REPLAY_SNAPSHOT_BARRIERS =
+            new ConcurrentHashMap<>();
+    private static final AtomicLong RECEIVED_REPLAY_SNAPSHOT_GENERATION = new AtomicLong();
+    private static final Deque<DeferredReplayMovement> DEFERRED_REPLAY_MOVEMENTS = new ArrayDeque<>();
+    private static volatile long clearedReplaySnapshotGeneration;
+
+    private record DeferredReplayMovement(
+            long generation,
+            ClientboundSableSnapshotDualPacket packet,
+            PacketReceiveMode receiveMode) {
+    }
+
     private SableCompat() {
     }
 
@@ -97,6 +122,205 @@ public final class SableCompat {
      */
     public static boolean isPlotEntity(Entity entity) {
         return entity != null && !entity.isRemoved() && isPlotPos(entity.blockPosition());
+    }
+
+    /**
+     * Begins a complete Sable client-state replacement for a replay snapshot.
+     *
+     * <p>A snapshot describes all sub-levels that exist at that point in time. Merely replacing a
+     * sub-level when another start packet uses the same plot leaves every sub-level absent from the
+     * new snapshot alive as a ghost. The returned vanilla packet is inserted at the front of the
+     * snapshot backlog so the client resets exactly at the boundary in its network stream, including
+     * snapshots that contain no sub-levels.
+     */
+    public static ClientboundPingPacket beginReplaySnapshotReset() {
+        long generation = REPLAY_SNAPSHOT_GENERATION.incrementAndGet();
+        int barrierId = 0xFB000000 | ((int) generation & 0x00FFFFFF);
+        REPLAY_SNAPSHOT_BARRIERS.put(barrierId, generation);
+
+        // A replay session cannot realistically seek through this many snapshots while a packet is
+        // still in flight. Keeping a small history allows the same barrier to be delivered to a
+        // replacement ReplayPlayer identity without growing this process-wide map forever.
+        long oldestUsefulGeneration = generation - 64;
+        REPLAY_SNAPSHOT_BARRIERS.entrySet().removeIf(
+                entry -> entry.getValue() < oldestUsefulGeneration);
+        return new ClientboundPingPacket(barrierId);
+    }
+
+    /**
+     * Handles the marker inserted immediately before a complete replay snapshot. Because this runs
+     * from the vanilla packet handler, it is ordered with every old and new replay packet on the
+     * same client connection: old movement -> reset -> replacement StartTracking/chunks/movement.
+     */
+    public static boolean handleReplaySnapshotBarrier(int barrierId) {
+        if (!(Minecraft.getInstance().getSingleplayerServer()
+                instanceof com.moulberry.flashback.playback.ReplayServer)) {
+            return false;
+        }
+        Long generation = REPLAY_SNAPSHOT_BARRIERS.get(barrierId);
+        if (generation == null) {
+            return false;
+        }
+        RECEIVED_REPLAY_SNAPSHOT_GENERATION.accumulateAndGet(generation, Math::max);
+        clearReplaySnapshotState(generation);
+        return true;
+    }
+
+    /** Retries the most recently received barrier after the client level/container becomes ready. */
+    public static void ensureReceivedReplaySnapshotReset() {
+        clearReplaySnapshotState(RECEIVED_REPLAY_SNAPSHOT_GENERATION.get());
+    }
+
+    public static long receivedReplaySnapshotGeneration() {
+        return RECEIVED_REPLAY_SNAPSHOT_GENERATION.get();
+    }
+
+    /**
+     * Sable sends StartTracking over TCP and movement over a separate UDP stream while recording.
+     * Their capture order is therefore not a dependency order: the first movement for a newly
+     * created sub-level can be stored immediately before its StartTracking packet. Sable normally
+     * drops such a movement, losing the initial velocity and corrupting later interpolation.
+     */
+    public static boolean deferReplayMovementUntilTracked(
+            ClientboundSableSnapshotDualPacket packet, Level level, PacketReceiveMode receiveMode) {
+        if (!(Minecraft.getInstance().getSingleplayerServer()
+                instanceof com.moulberry.flashback.playback.ReplayServer)) {
+            return false;
+        }
+
+        // Replay data is deliberately delivered through the registered TCP payload codec. Any UDP
+        // packet during playback was synthesized by the local ReplayServer rather than recorded.
+        if (receiveMode == PacketReceiveMode.UDP) {
+            LOGGER.debug("Dropping synthetic UDP Sable movement during replay");
+            return true;
+        }
+
+        SubLevelContainer container = SubLevelContainer.getContainer(level);
+        if (container == null || allMovementPlotsTracked(packet, container)) {
+            return false;
+        }
+
+        long generation = RECEIVED_REPLAY_SNAPSHOT_GENERATION.get();
+        synchronized (DEFERRED_REPLAY_MOVEMENTS) {
+            DEFERRED_REPLAY_MOVEMENTS.addLast(
+                    new DeferredReplayMovement(generation, packet, receiveMode));
+            while (DEFERRED_REPLAY_MOVEMENTS.size() > 256) {
+                DeferredReplayMovement dropped = DEFERRED_REPLAY_MOVEMENTS.removeFirst();
+                LOGGER.warn("Dropping stale deferred Sable replay movement from generation {} after queue overflow",
+                        dropped.generation());
+            }
+        }
+
+        List<String> missing = packet.entries().stream()
+                .filter(entry -> container.getSubLevel(
+                        ChunkPos.getX(entry.plotCoordinate()), ChunkPos.getZ(entry.plotCoordinate())) == null)
+                .map(entry -> "(" + ChunkPos.getX(entry.plotCoordinate()) + ", "
+                        + ChunkPos.getZ(entry.plotCoordinate()) + ")")
+                .toList();
+        LOGGER.debug("Deferred Sable replay movement generation={} tickPlots={} until StartTracking for {}",
+                generation, packet.entries().size(), missing);
+        return true;
+    }
+
+    /** Applies movements whose StartTracking packet has now allocated every referenced plot. */
+    public static void flushDeferredReplayMovements(Level level) {
+        SubLevelContainer container = SubLevelContainer.getContainer(level);
+        if (container == null) {
+            return;
+        }
+
+        long generation = RECEIVED_REPLAY_SNAPSHOT_GENERATION.get();
+        List<DeferredReplayMovement> ready = new ArrayList<>();
+        synchronized (DEFERRED_REPLAY_MOVEMENTS) {
+            var iterator = DEFERRED_REPLAY_MOVEMENTS.iterator();
+            while (iterator.hasNext()) {
+                DeferredReplayMovement deferred = iterator.next();
+                if (deferred.generation() < generation) {
+                    iterator.remove();
+                } else if (deferred.generation() == generation
+                        && allMovementPlotsTracked(deferred.packet(), container)) {
+                    iterator.remove();
+                    ready.add(deferred);
+                }
+            }
+        }
+
+        for (DeferredReplayMovement deferred : ready) {
+            LOGGER.debug("Applying deferred Sable replay movement generation={} after StartTracking",
+                    deferred.generation());
+            ((InvokerSableSnapshotDualPacket) (Object) deferred.packet())
+                    .flashbackNeoForgeFixed$handleClient(level, deferred.receiveMode());
+        }
+    }
+
+    private static boolean allMovementPlotsTracked(
+            ClientboundSableSnapshotDualPacket packet, SubLevelContainer container) {
+        for (ClientboundSableSnapshotDualPacket.Entry entry : packet.entries()) {
+            if (container.getSubLevel(
+                    ChunkPos.getX(entry.plotCoordinate()), ChunkPos.getZ(entry.plotCoordinate())) == null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void clearReplaySnapshotState(long generation) {
+        if (generation == 0 || generation <= clearedReplaySnapshotGeneration) {
+            return;
+        }
+
+        Minecraft minecraft = Minecraft.getInstance();
+        if (!(minecraft.getSingleplayerServer() instanceof com.moulberry.flashback.playback.ReplayServer)) {
+            return;
+        }
+
+        // Local integrated-server Sable traffic bypasses Minecraft's Connection and waits in its
+        // own client event loop. It therefore is not ordered by the replay barrier. Discard anything
+        // generated before this snapshot; recorded replay movement is delivered through TCP and is
+        // not stored in this queue.
+        if (SableClient.NETWORK_EVENT_LOOP != null) {
+            SableClient.NETWORK_EVENT_LOOP.clear();
+        }
+        synchronized (DEFERRED_REPLAY_MOVEMENTS) {
+            DEFERRED_REPLAY_MOVEMENTS.clear();
+        }
+
+        ClientLevel level = minecraft.level;
+        if (level == null) {
+            return;
+        }
+        ClientSubLevelContainer container = SubLevelContainer.getContainer(level);
+        if (container == null) {
+            return;
+        }
+
+        // Direct plot entities never exist in Flashback's reconstructed server, so its ordinary
+        // snapshot reset cannot send removals for them. Remove them while the old plot map still
+        // exists, before unloading the chunks that identify those entities as plot-bound.
+        List<Integer> plotEntityIds = new ArrayList<>();
+        for (Entity entity : level.entitiesForRendering()) {
+            if (isPlotEntity(entity)) {
+                plotEntityIds.add(entity.getId());
+            }
+        }
+        for (int entityId : plotEntityIds) {
+            level.removeEntity(entityId, Entity.RemovalReason.DISCARDED);
+        }
+
+        ((SableInterpolationStateExt) container.getInterpolation())
+                .flashbackNeoForgeFixed$resetForReplaySnapshot();
+
+        // Copy before removal because getAllSubLevels exposes Sable's live backing list.
+        List<ClientSubLevel> staleSubLevels = List.copyOf(container.getAllSubLevels());
+        for (ClientSubLevel subLevel : staleSubLevels) {
+            if (!subLevel.isRemoved()) {
+                container.removeSubLevel(subLevel, SubLevelRemovalReason.REMOVED);
+            }
+        }
+
+        clearedReplaySnapshotGeneration = generation;
+        LOGGER.debug("Applied Sable replay snapshot barrier generation {}; removed {} stale sub-level(s)",
+                generation, staleSubLevels.size());
     }
 
     public static void collectSubLevelSnapshots(ClientLevel level, List<Consumer<ReplayWriter>> tasks,

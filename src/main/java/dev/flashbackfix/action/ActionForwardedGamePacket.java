@@ -67,6 +67,11 @@ public class ActionForwardedGamePacket implements Action {
             return;
         }
 
+        if (((ReplayServerCatchupExt) replayServer)
+                .flashbackNeoForgeFixed$deferUntilSnapshotDelivered(packet)) {
+            return;
+        }
+
         for (ServerPlayer viewer : viewers) {
             viewer.connection.send(packet);
         }

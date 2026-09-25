@@ -62,6 +62,10 @@ public final class ActionForwardedModdedPayload implements Action {
             ((ReplayServerCatchupExt) replayServer).flashbackNeoForgeFixed$queueForNewViewers(packet);
             return;
         }
+        if (((ReplayServerCatchupExt) replayServer)
+                .flashbackNeoForgeFixed$deferUntilSnapshotDelivered(packet)) {
+            return;
+        }
         for (ServerPlayer viewer : viewers) {
             viewer.connection.send(packet);
         }

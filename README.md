@@ -38,7 +38,7 @@ will tolerate those legacy mods, but removing them avoids duplicate replay handl
 
 <p align="center">
   <img src="./images/AERONAUTICS_BANNER.png" alt="Create: Aeronautics compatibility">
-  <br>Create: Aeronautics sub-level recording and riding state
+  <br>Create: Aeronautics sub-level recording, rewind-safe state replacement, and dedicated-server support
 </p>
 
 <p align="center">

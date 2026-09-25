@@ -9,7 +9,9 @@ import dev.flashbackfix.ext.ReplayServerCatchupExt;
 import dev.flashbackfix.ext.ReplayServerComplexSpawnExt;
 import dev.flashbackfix.ext.ReplayServerRegistryExt;
 import dev.flashbackfix.compat.ReplayRegistryCompat;
+import dev.flashbackfix.compat.SableCompat;
 import dev.flashbackfix.compat.VoxyReplayCompat;
+import dev.flashbackfix.FlashbackNeoForgeFixed;
 import io.netty.buffer.ByteBuf;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -150,6 +152,31 @@ public class MixinReplayServer implements ReplayServerComplexSpawnExt, ReplaySer
     private Map<Entity, double[]> flashbackNeoForgeFixed$authoritativeEntityPoses;
     @Unique
     private Set<Entity> flashbackNeoForgeFixed$authoritativePoseUpdates;
+    @Unique
+    private boolean flashbackNeoForgeFixed$snapshotDeliveryPending;
+
+    /**
+     * Every replay snapshot is a full replacement, not a delta. Discard the previous viewer
+     * catch-up image before snapshot actions build the new one, and reset Sable's client-only plot
+     * state. Without this, seeks accumulate old StartTracking/chunk packets and retain sub-levels
+     * that are absent from the destination snapshot.
+     */
+    @Inject(method = "clearDataForPlayingSnapshot", at = @At("HEAD"))
+    private void flashbackNeoForgeFixed$beginCompleteSnapshotReplacement(CallbackInfo ci) {
+        if (this.flashbackNeoForgeFixed$viewerCatchupBacklog != null) {
+            this.flashbackNeoForgeFixed$viewerCatchupBacklog.clear();
+        }
+        if (this.flashbackNeoForgeFixed$viewerCatchupOffsets != null) {
+            this.flashbackNeoForgeFixed$viewerCatchupOffsets.clear();
+        }
+        this.flashbackNeoForgeFixed$snapshotDeliveryPending = true;
+        if (FlashbackNeoForgeFixed.isSableLoaded) {
+            // Keep the reset marker in the same ordered backlog as the snapshot itself. Scheduling
+            // a client task here can overtake one already-decoded movement packet and leave that old
+            // pose alive after the reset, which becomes visible after several seeks.
+            this.flashbackNeoForgeFixed$backlog().add(SableCompat.beginReplaySnapshotReset());
+        }
+    }
 
     @Unique
     private Map<Entity, double[]> flashbackNeoForgeFixed$authoritativePoses() {
@@ -248,6 +275,15 @@ public class MixinReplayServer implements ReplayServerComplexSpawnExt, ReplaySer
         this.flashbackNeoForgeFixed$backlog().add(packet);
     }
 
+    @Override
+    public boolean flashbackNeoForgeFixed$deferUntilSnapshotDelivered(Packet<?> packet) {
+        if (!this.flashbackNeoForgeFixed$snapshotDeliveryPending) {
+            return false;
+        }
+        this.flashbackNeoForgeFixed$backlog().add(packet);
+        return true;
+    }
+
     // ReplayServer is always an IntegratedServer, so watching a replay is always exactly one physical
     // client - but which ServerPlayer identity represents that client is not stable: it logs in under a
     // throwaway "Replay Viewer" profile while the UI is still coming up, and that can be replaced by a
@@ -261,15 +297,13 @@ public class MixinReplayServer implements ReplayServerComplexSpawnExt, ReplaySer
     // connection then retain the required add-entity -> passengers ordering.
     @Inject(method = "tickServer", at = @At("TAIL"))
     private void flashbackNeoForgeFixed$catchUpNewViewers(BooleanSupplier hasTimeLeft, CallbackInfo ci) {
-        if (this.flashbackNeoForgeFixed$viewerCatchupBacklog == null
-                || this.flashbackNeoForgeFixed$viewerCatchupBacklog.isEmpty()) {
-            return;
-        }
-
-        List<Packet<?>> ready = List.copyOf(this.flashbackNeoForgeFixed$viewerCatchupBacklog);
+        List<Packet<?>> ready = this.flashbackNeoForgeFixed$viewerCatchupBacklog == null
+                ? List.of()
+                : List.copyOf(this.flashbackNeoForgeFixed$viewerCatchupBacklog);
         List<ServerPlayer> players = ((ReplayServer) (Object) this).getPlayerList().getPlayers();
         Map<ServerPlayer, Integer> offsets = this.flashbackNeoForgeFixed$catchupOffsets();
         offsets.keySet().removeIf(player -> !players.contains(player));
+        boolean deliveredToReplayViewer = false;
         for (ServerPlayer player : players) {
             if (player instanceof ReplayPlayer) {
                 int offset = Math.min(offsets.getOrDefault(player, 0), ready.size());
@@ -277,7 +311,14 @@ public class MixinReplayServer implements ReplayServerComplexSpawnExt, ReplaySer
                     player.connection.send(ready.get(index));
                 }
                 offsets.put(player, ready.size());
+                deliveredToReplayViewer = true;
             }
+        }
+        if (deliveredToReplayViewer) {
+            // Packets added by fast-forward were sent after every StartTracking/chunk/finalize
+            // packet from the replacement snapshot. Future live timeline packets may now use the
+            // direct path until another snapshot/seek establishes a new ordering barrier.
+            this.flashbackNeoForgeFixed$snapshotDeliveryPending = false;
         }
     }
 }
