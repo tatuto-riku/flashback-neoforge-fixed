@@ -30,6 +30,9 @@ Create: Aeronautics, Voxy, and several rendering integrations.
 
 Sable, Create, Voxy, and the other supported integrations are optional.
 
+Create: The Air War 4.67's tooltip cache is also protected from concurrent creative-search
+updates when that optional mod is installed.
+
 Legacy `Create: Flashback` and `Create: Aeronautics Flashback` installations are not
 required because their compatibility features are included here. Version 1.0.9 and newer
 will tolerate those legacy mods, but removing them avoids duplicate replay handlers.

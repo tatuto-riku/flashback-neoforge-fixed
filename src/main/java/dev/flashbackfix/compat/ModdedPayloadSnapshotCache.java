@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.ConnectionProtocol;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
@@ -217,6 +218,10 @@ public final class ModdedPayloadSnapshotCache {
         if (directId != null) {
             return directId;
         }
+        BlockPos blockPos = findBlockPos(payload);
+        if (blockPos != null) {
+            return blockPos.immutable();
+        }
         // Create's AddTrainPacket wraps the UUID-bearing Train in its `train` record component.
         // Key it by that UUID so recordings started with several existing trains retain all of them.
         if ("create:add_train".equals(payload.type().id().toString()) && payload.getClass().isRecord()) {
@@ -246,7 +251,8 @@ public final class ModdedPayloadSnapshotCache {
         Class<?> type = value.getClass();
         if (type.isRecord()) {
             for (RecordComponent component : type.getRecordComponents()) {
-                if (!component.getName().equalsIgnoreCase("id")) {
+                String name = component.getName();
+                if (!name.equalsIgnoreCase("id") && !name.equalsIgnoreCase("uuid")) {
                     continue;
                 }
                 try {
@@ -260,7 +266,49 @@ public final class ModdedPayloadSnapshotCache {
             }
         }
         Object id = readField(value, "id");
-        return id instanceof UUID uuid ? uuid : null;
+        if (id instanceof UUID uuid) {
+            return uuid;
+        }
+        Object uuid = readField(value, "uuid");
+        return uuid instanceof UUID result ? result : null;
+    }
+
+    /**
+     * Finds the conventional block target of a payload whose state belongs to a block entity.
+     * Simulated's rope packets are an important example: active strands are keyed by {@code uuid},
+     * while their stopped-state packet is keyed only by {@code ownerPos}. Without this fallback,
+     * updates for every rope holder collapse into one singleton snapshot entry.
+     */
+    private static BlockPos findBlockPos(Object value) {
+        if (value == null) {
+            return null;
+        }
+        Class<?> type = value.getClass();
+        if (type.isRecord()) {
+            for (RecordComponent component : type.getRecordComponents()) {
+                String name = component.getName().toLowerCase(java.util.Locale.ROOT);
+                if (!BlockPos.class.isAssignableFrom(component.getType())
+                        || !(name.equals("pos") || name.equals("blockpos")
+                        || name.equals("ownerpos") || name.equals("position"))) {
+                    continue;
+                }
+                try {
+                    Object position = component.getAccessor().invoke(value);
+                    if (position instanceof BlockPos blockPos) {
+                        return blockPos;
+                    }
+                } catch (ReflectiveOperationException ignored) {
+                    break;
+                }
+            }
+        }
+        for (String fieldName : List.of("pos", "blockPos", "ownerPos", "position")) {
+            Object position = readField(value, fieldName);
+            if (position instanceof BlockPos blockPos) {
+                return blockPos;
+            }
+        }
+        return null;
     }
 
     private static Object readField(Object instance, String name) {
