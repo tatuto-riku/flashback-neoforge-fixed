@@ -1,30 +1,45 @@
 package dev.flashbackfix.mixin;
 
 import com.moulberry.flashback.Flashback;
+import com.moulberry.flashback.record.Recorder;
+import dev.flashbackfix.action.ActionModdedPayload;
+import dev.ryanhcode.sable.network.udp.SableUDPPacket;
 import dev.ryanhcode.sable.network.udp.SableUDPServer;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.network.ConnectionProtocol;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Sable streams sub-level pose updates over its own raw UDP socket, entirely bypassing Minecraft's
- * Connection - there's no packet on the Connection for Flashback's recording to see, no matter how
- * generic that capture is. Sable already has a Connection-routed fallback for exactly this situation:
- * SubLevelTrackingSystem sends pose updates as an ordinary custom-payload packet via
- * player.connection.send(...) whenever isConnectedTo() reports the player as UDP-unreachable. Forcing
- * that to report false while a recording is in progress routes pose updates through the same
- * Connection-based path MixinRecorder already captures, instead of needing to tap the UDP socket
- * directly. Outside of a recording this changes nothing and Sable's UDP path works as usual.
+ * Records Sable's integrated-server pose stream without changing its transport.
+ *
+ * <p>Sable handles the local player specially: {@code sendUDPPacketLocal} copies the UDP payload and
+ * places it straight onto Sable's client event loop. It never reaches either Minecraft's Connection
+ * or {@link MixinSableUDPChannelHandlerClient}. The old workaround made {@code isConnectedTo} return
+ * false while recording, which forced every pose update through Minecraft's reliable TCP bundle
+ * queue. Around a busy Aeronautics entity that queue grew faster than the integrated server could
+ * drain it, producing progressively larger tick stalls. Capture the immutable payload at the local
+ * transport boundary instead and leave Sable's normal low-overhead delivery path intact.</p>
  */
 @Mixin(SableUDPServer.class)
 public class MixinSableUDPServer {
 
-    @Inject(method = "isConnectedTo", at = @At("HEAD"), cancellable = true)
-    private void flashbackNeoForgeFixed$forceConnectionFallbackWhileRecording(ServerPlayer player, CallbackInfoReturnable<Boolean> cir) {
-        if (Flashback.RECORDER != null) {
-            cir.setReturnValue(false);
+    @Inject(
+            method = "sendUDPPacketLocal(Ldev/ryanhcode/sable/network/udp/SableUDPPacket;)V",
+            at = @At("HEAD"))
+    private void flashbackNeoForgeFixed$recordLocalMovement(
+            SableUDPPacket udpPacket, CallbackInfo ci) {
+        Recorder recorder = Flashback.RECORDER;
+        if (recorder == null || !(udpPacket instanceof CustomPacketPayload payload)) {
+            return;
+        }
+
+        ActionModdedPayload.EncodedPayload encoded =
+                ActionModdedPayload.encodeSynthetic(ConnectionProtocol.PLAY, payload);
+        if (encoded != null) {
+            recorder.submitCustomTask(writer -> ActionModdedPayload.write(writer, encoded));
         }
     }
 }

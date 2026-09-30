@@ -28,6 +28,8 @@
     "MixinClientPacketListenerSableRiding",
     "MixinConnectionReplayEncoderFault",
     "MixinReplayServerPlayerList",
+    "MixinRocketnauticsDeepSpaceData",
+    "MixinRocketnauticsDeepSpaceHelper",
     "MixinReplayUISuperResolution",
     "MixinReplayUILoadFont",
     "MixinPlayerListReplayHooks",
@@ -57,7 +59,8 @@
     "MixinWindowSuperResolutionReplay"
   ],
   "client": [
-    "MixinAirWarTooltipCache"
+    "MixinAirWarTooltipCache",
+    "MixinPauseScreenButtonCollision"
   ],
   "injectors": {
     "defaultRequire": 1

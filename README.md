@@ -7,7 +7,7 @@
 Compatibility fixes for running [Flashback](https://modrinth.com/mod/flashback) on
 NeoForge 1.21.1 through Sinytra Connector. The mod preserves modded packets and replay
 snapshot state, with additional compatibility for Create, Sable-based sub-levels,
-Create: Aeronautics, Voxy, and several rendering integrations.
+Create: Aeronautics, Create: Cosmonautics, Voxy, and several rendering integrations.
 
 <img src="./images/aeronautics.png">
 
@@ -29,6 +29,14 @@ Create: Aeronautics, Voxy, and several rendering integrations.
 - [Flashback](https://modrinth.com/mod/flashback) 0.39 or newer
 
 Sable, Create, Voxy, and the other supported integrations are optional.
+
+Create: Cosmonautics' live universe simulation is disabled only inside Flashback's
+partial replay server, where the `rocketnautics:deep_space` dimension is intentionally
+absent. Normal worlds and dedicated servers continue to simulate it normally.
+
+When Create: Tweaked Controllers adds its configuration icon to the pause menu after
+Flashback has laid out its recording controls, the icon is moved to the nearest free
+side slot so both controls remain visible and clickable.
 
 Create: The Air War 4.67's tooltip cache is also protected from concurrent creative-search
 updates when that optional mod is installed.
