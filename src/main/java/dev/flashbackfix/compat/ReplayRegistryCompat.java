@@ -71,6 +71,22 @@ public final class ReplayRegistryCompat {
     }
 
     /**
+     * Tests whether applying a recorded snapshot would be a numeric no-op.
+     *
+     * <p>NeoForge implements even an identical remap by clearing and rebuilding the registry. For
+     * the block registry that also clears and repopulates the global block-state ID map. The replay
+     * server and its local client decode packets on different threads, so needlessly rebuilding a
+     * large pack's map during every seek exposes a partially populated map to the decoder. Compare
+     * the actual ID and alias tables first and leave stable global registries untouched.</p>
+     */
+    public static boolean hasSameMappings(
+            RegistrySnapshot current, RegistrySnapshot recorded) {
+        return current != null
+                && current.getIds().equals(recorded.getIds())
+                && current.getAliases().equals(recorded.getAliases());
+    }
+
+    /**
      * Recordings made before ActionRegistrySnapshot retain namespace encounter order in Flashback's
      * metadata. NeoForge normally registers one mod namespace as a group, so that order can recover
      * old raw IDs when the entries themselves are still installed. It is deliberately only a legacy

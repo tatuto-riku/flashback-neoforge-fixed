@@ -46,6 +46,7 @@ public final class InboundPayloadCapture {
             int endIndex) {
         if (payload == null
                 || Minecraft.getInstance().getSingleplayerServer() instanceof ReplayServer
+                || ReplayPayloadPolicy.isTransientClientEffect(payload.type().id())
                 || startIndex < 0
                 || endIndex <= startIndex
                 || endIndex > frame.writerIndex()) {

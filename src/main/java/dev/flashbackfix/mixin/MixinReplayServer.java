@@ -72,6 +72,8 @@ public class MixinReplayServer implements ReplayServerComplexSpawnExt, ReplaySer
         // NeoForge clears a registry before applying its snapshot. Preflight every entry so an old
         // recording made with a now-uninstalled mod cannot leave the live global registry half empty.
         Map<ResourceLocation, RegistrySnapshot> applicable = new LinkedHashMap<>();
+        Map<ResourceLocation, RegistrySnapshot> current =
+                RegistryManager.takeSnapshot(RegistryManager.SnapshotType.SYNC_TO_CLIENT);
         for (var entry : snapshots.entrySet()) {
             boolean invalidIds = entry.getValue().getIds().int2ObjectEntrySet().stream()
                     .anyMatch(id -> id.getIntKey() < 0 || id.getValue() == null);
@@ -102,7 +104,14 @@ public class MixinReplayServer implements ReplayServerComplexSpawnExt, ReplaySer
                         unavailable.subList(0, Math.min(8, unavailable.size())));
                 continue;
             }
+            if (ReplayRegistryCompat.hasSameMappings(current.get(entry.getKey()), entry.getValue())) {
+                continue;
+            }
             applicable.put(entry.getKey(), entry.getValue());
+        }
+
+        if (applicable.isEmpty()) {
+            return;
         }
 
         var missing = ReplayRegistryCompat.applySnapshot(applicable);

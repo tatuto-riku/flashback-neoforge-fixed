@@ -60,7 +60,9 @@
   ],
   "client": [
     "MixinAirWarTooltipCache",
-    "MixinPauseScreenButtonCollision"
+    "MixinMinecraftReplayInputRecovery",
+    "MixinPauseScreenButtonCollision",
+    "MixinTitleScreenReplayButtonCollision"
   ],
   "injectors": {
     "defaultRequire": 1

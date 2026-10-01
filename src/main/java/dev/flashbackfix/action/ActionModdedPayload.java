@@ -134,6 +134,18 @@ public class ActionModdedPayload implements Action {
         ConnectionProtocol protocol = buf.readEnum(ConnectionProtocol.class);
         ResourceLocation id = buf.readResourceLocation();
 
+        // These packets are commands to mutate the original client's UI, not world state. New
+        // recordings omit them at capture time, while this guard also repairs existing recordings
+        // that already contain one in either their snapshot or timeline.
+        if (ReplayPayloadPolicy.isTransientClientEffect(id)) {
+            int encodedBytes = buf.readableBytes();
+            buf.skipBytes(encodedBytes);
+            if (loggedMissingCodecTypes.add(id)) {
+                LOGGER.info("Ignoring transient client UI payload {} during replay playback", id);
+            }
+            return;
+        }
+
         // Player/session state is recreated by the mod for the ReplayServer's current viewer. Old
         // recordings cached the original connection's transaction in their snapshot, which can be
         // both stale and only partially captured. Reject it before decoding or forwarding while

@@ -1,29 +1,40 @@
 package dev.flashbackfix.mixin;
 
 import com.moulberry.flashback.screen.FlashbackButton;
+import dev.flashbackfix.compat.ButtonPlacement;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Renderable;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Keeps late-added pause-menu icons from covering Flashback's recording controls. */
+/** Keeps small mod-added pause-menu controls from covering Flashback's recording controls. */
 @Mixin(PauseScreen.class)
 public abstract class MixinPauseScreenButtonCollision extends Screen {
 
-    private static final String TWEAKED_CONTROLLERS_BUTTON =
-            "com.getitemfromblock.create_tweaked_controllers.gui.ModMainConfigButton";
+    private static final int MAX_SIDE_BUTTON_SIZE = 32;
+
+    @Unique
+    private final Map<AbstractWidget, ButtonPlacement>
+            flashbackNeoForgeFixed$relocatedButtons = new IdentityHashMap<>();
 
     private MixinPauseScreenButtonCollision() {
-        super(null);
+        super(Component.empty());
     }
 
+    // NeoForge screen events can add their widgets after PauseScreen.init has returned. Resolve at
+    // render/tick time so the result is independent of mod event ordering, then leave the widget at
+    // its stable non-overlapping position on following frames.
     @Inject(method = "tick", at = @At("TAIL"))
     private void flashbackNeoForgeFixed$avoidLatePauseButtonCollisions(CallbackInfo ci) {
         flashbackNeoForgeFixed$resolvePauseButtonCollisions();
@@ -37,63 +48,68 @@ public abstract class MixinPauseScreenButtonCollision extends Screen {
 
     private void flashbackNeoForgeFixed$resolvePauseButtonCollisions() {
         List<FlashbackButton> recordingControls = new ArrayList<>();
-        List<AbstractWidget> widgets = new ArrayList<>();
-        List<AbstractWidget> lateButtons = new ArrayList<>();
+        List<AbstractWidget> sideButtons = new ArrayList<>();
 
         for (Renderable renderable : this.renderables) {
             if (!(renderable instanceof AbstractWidget widget) || !widget.visible) {
                 continue;
             }
-            widgets.add(widget);
             if (widget instanceof FlashbackButton button) {
                 recordingControls.add(button);
-            } else if (TWEAKED_CONTROLLERS_BUTTON.equals(widget.getClass().getName())) {
-                lateButtons.add(widget);
+            } else if (widget.getWidth() <= MAX_SIDE_BUTTON_SIZE
+                    && widget.getHeight() <= MAX_SIDE_BUTTON_SIZE) {
+                ButtonPlacement previous = flashbackNeoForgeFixed$relocatedButtons.get(widget);
+                if (previous != null) {
+                    if (widget.getX() == previous.movedX() && widget.getY() == previous.movedY()) {
+                        // Re-evaluate every frame from the position chosen by the owning mod. This
+                        // also restores the normal layout as soon as the collision disappears.
+                        widget.setPosition(previous.originX(), previous.originY());
+                    } else {
+                        // Another mod deliberately moved the widget after us. Treat that new
+                        // position as authoritative instead of fighting its layout updates.
+                        flashbackNeoForgeFixed$relocatedButtons.remove(widget);
+                    }
+                }
+                sideButtons.add(widget);
             }
         }
 
         if (recordingControls.isEmpty()) {
+            flashbackNeoForgeFixed$relocatedButtons.clear();
             return;
         }
 
-        for (AbstractWidget lateButton : lateButtons) {
-            if (!overlapsAny(lateButton, recordingControls)) {
+        for (AbstractWidget sideButton : sideButtons) {
+            if (!overlapsAny(sideButton, recordingControls)) {
                 continue;
             }
 
-            int originX = lateButton.getX();
-            int originY = lateButton.getY();
-            int stepX = lateButton.getWidth() + 4;
-            int stepY = lateButton.getHeight() + 4;
-            int outward = originX + lateButton.getWidth() / 2 < this.width / 2 ? -1 : 1;
+            int originX = sideButton.getX();
+            int originY = sideButton.getY();
+            int stepX = sideButton.getWidth() + 4;
+            boolean placed = false;
 
-            // The Tweaked Controllers icon is attached to the side of a menu row. Prefer moving it
-            // one slot farther out, then nearby vertical slots, while keeping every widget usable.
-            for (int radius = 1; radius <= 8; radius++) {
-                int[][] offsets = {
-                        {outward * radius, 0},
-                        {0, radius}, {0, -radius},
-                        {outward * radius, radius}, {outward * radius, -radius},
-                        {-outward * radius, 0}
-                };
-                for (int[] offset : offsets) {
-                    int candidateX = originX + offset[0] * stepX;
-                    int candidateY = originY + offset[1] * stepY;
-                    if (!fitsOnScreen(lateButton, candidateX, candidateY)) {
-                        continue;
-                    }
-                    lateButton.setPosition(candidateX, candidateY);
-                    if (!overlapsAnyExcept(lateButton, widgets, lateButton)) {
-                        break;
-                    }
+            // Side icons are intentionally allowed to overlap the edge of their wide anchor row.
+            // Treating that row as an obstacle makes every vertical slot appear occupied on narrow
+            // GUIs. Keep the owning mod's Y coordinate and move only to a free slot on its right.
+            for (int slot = 1; slot <= 12; slot++) {
+                int candidateX = originX + slot * stepX;
+                if (!fitsOnScreen(sideButton, candidateX, originY)) {
+                    break;
                 }
-                if (!overlapsAnyExcept(lateButton, widgets, lateButton)) {
+                sideButton.setPosition(candidateX, originY);
+                if (!overlapsAny(sideButton, recordingControls)
+                        && !overlapsAnyExcept(sideButton, sideButtons, sideButton)) {
+                    flashbackNeoForgeFixed$relocatedButtons.put(
+                            sideButton,
+                            new ButtonPlacement(originX, originY, candidateX, originY));
+                    placed = true;
                     break;
                 }
             }
 
-            if (overlapsAnyExcept(lateButton, widgets, lateButton)) {
-                lateButton.setPosition(originX, originY);
+            if (!placed) {
+                sideButton.setPosition(originX, originY);
             }
         }
     }
@@ -104,7 +120,8 @@ public abstract class MixinPauseScreenButtonCollision extends Screen {
                 && y + widget.getHeight() <= this.height;
     }
 
-    private static boolean overlapsAny(AbstractWidget subject, List<? extends AbstractWidget> others) {
+    private static boolean overlapsAny(
+            AbstractWidget subject, List<? extends AbstractWidget> others) {
         for (AbstractWidget other : others) {
             if (overlaps(subject, other)) {
                 return true;

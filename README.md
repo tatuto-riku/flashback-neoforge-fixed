@@ -34,9 +34,13 @@ Create: Cosmonautics' live universe simulation is disabled only inside Flashback
 partial replay server, where the `rocketnautics:deep_space` dimension is intentionally
 absent. Normal worlds and dedicated servers continue to simulate it normally.
 
-When Create: Tweaked Controllers adds its configuration icon to the pause menu after
-Flashback has laid out its recording controls, the icon is moved to the nearest free
-side slot so both controls remain visible and clickable.
+Small mod-added pause-menu buttons keep their normal position unless they overlap Flashback's
+recording controls. A colliding button moves only to the next free slot on its right, while its
+vertical position remains unchanged.
+
+The title-screen replay-list button likewise keeps Flashback's original position. When a small
+control added after screen initialization occupies that slot, the late-added control moves down
+instead of pushing the replay-list button farther to the right.
 
 Create: The Air War 4.67's tooltip cache is also protected from concurrent creative-search
 updates when that optional mod is installed.

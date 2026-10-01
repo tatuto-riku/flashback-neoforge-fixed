@@ -206,6 +206,7 @@ public final class ModdedPayloadSnapshotCache {
                 || namespace.equals("sable")
                 || namespace.equals("flashback")
                 || namespace.equals(FlashbackNeoForgeFixed.MODID)
+                || ReplayPayloadPolicy.isTransientClientEffect(id)
                 || ReplayPayloadPolicy.isConnectionScoped(id);
     }
 
