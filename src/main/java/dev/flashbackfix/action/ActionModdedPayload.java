@@ -5,6 +5,7 @@ import com.moulberry.flashback.io.ReplayWriter;
 import com.moulberry.flashback.playback.ReplayServer;
 import dev.flashbackfix.compat.ReplayComplexSpawnPairing;
 import dev.flashbackfix.compat.ReplayPayloadPolicy;
+import dev.flashbackfix.compat.ReplayWirePayload;
 import dev.flashbackfix.ext.ReplayServerCatchupExt;
 import dev.flashbackfix.ext.ReplayServerComplexSpawnExt;
 import io.netty.buffer.ByteBuf;
@@ -35,11 +36,10 @@ import java.util.Set;
  * can't do this on its own: its file codec is built straight from vanilla's GameProtocols, which only
  * knows how to encode a hardcoded list of vanilla debug custom-payloads, so any modded
  * ClientboundCustomPayloadPacket silently fails to encode and gets dropped (see
- * AsyncReplaySaver#writeGamePackets). Rather than reimplement that per mod, this uses
- * NetworkRegistry.getCodec - the same lookup NeoForge itself uses to decode a payload from its id - so
- * any mod that registers its networking normally (which is effectively all of them, including things
- * built on top of NeoForge's registrar like Veil) round-trips through a replay without needing to know
- * anything about that specific mod.
+ * AsyncReplaySaver#writeGamePackets). Rather than reimplement that per mod, this records the payload's
+ * immutable wire bytes and writes them unchanged into the viewing client's packet stream. The real
+ * client codec therefore decodes each payload exactly once, including protocols whose decoded objects
+ * cannot safely be encoded again.
  * <p>
  * One payload gets special treatment: NeoForge's own AdvancedAddEntityPayload, which carries
  * IEntityWithComplexSpawn data (e.g. Create's contraption controller position). That data belongs on the
@@ -170,31 +170,29 @@ public class ActionModdedPayload implements Action {
             return;
         }
 
-        // A payload's codec can depend on runtime registry state (e.g. Create's bogey blocks are
-        // looked up by raw block registry id) that isn't guaranteed stable between the session that
-        // recorded this action and the one replaying it now - a different mod list or load order
-        // shifts those ids and decodes into an unrelated object. That's unrecoverable for this one
-        // payload, not a reason to kill the whole replay tick.
-        CustomPacketPayload payload;
-        try {
-            payload = ((StreamCodec<FriendlyByteBuf, CustomPacketPayload>) codec).decode(buf);
-        } catch (RuntimeException exception) {
-            if (loggedMissingCodecTypes.add(id)) {
-                LOGGER.error("Failed to decode recorded payload {} ({}); dropping it. This usually means the "
-                        + "replay was recorded with a different mod list or load order than is installed now",
-                        id, protocol, exception);
+        byte[] encodedBytes = new byte[buf.readableBytes()];
+        buf.readBytes(encodedBytes);
+
+        // Most mod payloads are deliberately opaque on the replay server. A codec round-trip is not
+        // guaranteed to preserve them: some decoders keep a lazy buffer while their encoder reads a
+        // not-yet-populated collection. Decode only the infrastructure payload that must initialize
+        // Flashback's server-side entity, plus old action formats that need the safety inspection
+        // below. Everything else is forwarded from the immutable recording bytes.
+        boolean advancedEntitySpawn = id.equals(AdvancedAddEntityPayload.TYPE.id());
+        CustomPacketPayload payload = null;
+        if (advancedEntitySpawn || legacy
+                || (replayServer.isProcessingSnapshot && !trustedSnapshotBatch)) {
+            payload = decodeForReplay(codec, buf, encodedBytes, id, protocol);
+            if (payload == null) {
+                return;
             }
-            // A failed decode can leave the reader index anywhere inside the payload; ReplayReader
-            // still expects this action's whole slice consumed, so skip whatever is left of it.
-            buf.skipBytes(buf.readableBytes());
-            return;
         }
 
         // Older versions retained mutable/batched payload objects until an asynchronous write. Such
         // actions can contain an already-consumed inner ByteBuf or only the final fragment of a batch.
         // They cannot be repaired from the file. Drop only those capability shapes on the legacy
         // action; v2 freezes every fragment immediately and is safe to deliver.
-        boolean mutableOrBatched = isLegacyMutableOrBatched(payload);
+        boolean mutableOrBatched = payload != null && isLegacyMutableOrBatched(payload);
         if (legacy && mutableOrBatched) {
             if (loggedMissingCodecTypes.add(id)) {
                 LOGGER.warn("Dropping unsafe legacy buffered/batched replay payload {}; make a new recording to preserve it",
@@ -224,7 +222,8 @@ public class ActionModdedPayload implements Action {
             return;
         }
 
-        ClientboundCustomPayloadPacket packet = new ClientboundCustomPayloadPacket(payload);
+        ClientboundCustomPayloadPacket packet = new ClientboundCustomPayloadPacket(
+                new ReplayWirePayload(id, encodedBytes));
         var viewers = replayServer.getReplayViewers();
         if (replayServer.isProcessingSnapshot || viewers.isEmpty()) {
             // Snapshot actions run before pending entities are flushed into the level and tracked to
@@ -245,6 +244,30 @@ public class ActionModdedPayload implements Action {
 
         for (ServerPlayer viewer : viewers) {
             viewer.connection.send(packet);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static CustomPacketPayload decodeForReplay(
+            StreamCodec<? super FriendlyByteBuf, ? extends CustomPacketPayload> codec,
+            RegistryFriendlyByteBuf context,
+            byte[] encodedBytes,
+            ResourceLocation id,
+            ConnectionProtocol protocol) {
+        RegistryFriendlyByteBuf payloadBuffer = new RegistryFriendlyByteBuf(
+                Unpooled.wrappedBuffer(encodedBytes), context.registryAccess(),
+                context.getConnectionType());
+        try {
+            return ((StreamCodec<FriendlyByteBuf, CustomPacketPayload>) codec).decode(payloadBuffer);
+        } catch (RuntimeException exception) {
+            if (loggedMissingCodecTypes.add(id)) {
+                LOGGER.error("Failed to decode recorded payload {} ({}); dropping it. This usually means the "
+                                + "replay was recorded with a different mod list or load order than is installed now",
+                        id, protocol, exception);
+            }
+            return null;
+        } finally {
+            payloadBuffer.release();
         }
     }
 

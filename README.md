@@ -45,6 +45,10 @@ instead of pushing the replay-list button farther to the right.
 Create: The Air War 4.67's tooltip cache is also protected from concurrent creative-search
 updates when that optional mod is installed.
 
+Recorded custom payloads are forwarded to the replay client byte-for-byte. This preserves lazy
+data-registry synchronization used by Cobblemon and prevents later battle packets from being
+decoded against an accidentally emptied species registry.
+
 Legacy `Create: Flashback` and `Create: Aeronautics Flashback` installations are not
 required because their compatibility features are included here. Version 1.0.9 and newer
 will tolerate those legacy mods, but removing them avoids duplicate replay handlers.

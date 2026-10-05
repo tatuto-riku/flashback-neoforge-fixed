@@ -18,6 +18,7 @@
     "MixinCreateElevatorFloorRequestReplay",
     "MixinCreateElevatorPulleyReplay",
     "MixinCreateLinearActuatorReplay",
+    "MixinCustomPacketPayloadCodec",
     "MixinFlashbackImGuiFramebuffer",
     "MixinFlashbackMetaVoxyStorage",
     "MixinGameRendererSuperResolutionImGui",
