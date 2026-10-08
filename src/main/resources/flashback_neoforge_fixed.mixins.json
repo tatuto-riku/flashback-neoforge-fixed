@@ -13,6 +13,7 @@
     "MixinClientCommonPacketListenerModdedState",
     "MixinClientCommonPacketListenerReplaySnapshotBarrier",
     "MixinChunkBlockEntitySnapshot",
+    "MixinCopycatModelNeoForge",
     "MixinCreateContraptionColliderReplay",
     "MixinCreateElevatorContraptionReplay",
     "MixinCreateElevatorFloorRequestReplay",
@@ -24,6 +25,7 @@
     "MixinGameRendererSuperResolutionImGui",
     "MixinMinecraftSuperResolutionImGui",
     "MixinMinecraftReplayInterpolation",
+    "MixinNeoForgeVoicechatPluginLoader",
     "MixinPacketDecoderPayloadCapture",
     "MixinClientLevelSableRiding",
     "MixinClientPacketListenerSableRiding",
@@ -61,6 +63,7 @@
   ],
   "client": [
     "MixinAirWarTooltipCache",
+    "MixinFlashbackVoiceChatConfig",
     "MixinMinecraftReplayInputRecovery",
     "MixinPauseScreenButtonCollision",
     "MixinTitleScreenReplayButtonCollision"

@@ -30,6 +30,12 @@ Create: Aeronautics, Create: Cosmonautics, Voxy, and several rendering integrati
 
 Sable, Create, Voxy, and the other supported integrations are optional.
 
+When Simple Voice Chat is installed, Flashback's voice-chat plugin is registered with its
+NeoForge loader automatically. Voice recording is disabled by default and must be enabled in
+Flashback's config file before starting a recording: open `config/flashback/flashback.json`
+(the `config` folder next to your `mods` folder) and set `"recordVoiceChat"` to `true`. Voice
+audio cannot be reconstructed in recordings made while it was disabled.
+
 Create: Cosmonautics' live universe simulation is disabled only inside Flashback's
 partial replay server, where the `rocketnautics:deep_space` dimension is intentionally
 absent. Normal worlds and dedicated servers continue to simulate it normally.
@@ -48,6 +54,10 @@ updates when that optional mod is installed.
 Recorded custom payloads are forwarded to the replay client byte-for-byte. This preserves lazy
 data-registry synchronization used by Cobblemon and prevents later battle packets from being
 decoded against an accidentally emptied species registry.
+
+Legacy recordings whose NeoForge registry metadata cannot distinguish simple and multi-state
+Copycats block entities recover their recorded material across every active part. This prevents
+Copycat Bytes and similar blocks from crashing Sodium's chunk builder when a replay is opened.
 
 Legacy `Create: Flashback` and `Create: Aeronautics Flashback` installations are not
 required because their compatibility features are included here. Version 1.0.9 and newer
