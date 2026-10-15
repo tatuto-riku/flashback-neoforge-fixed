@@ -25,6 +25,8 @@ import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.neoforged.neoforge.entity.IEntityWithComplexSpawn;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,6 +60,11 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
 
     @Shadow
     private Entity getEntityOrPending(int entityId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Shadow
+    public ServerLevel level() {
         throw new UnsupportedOperationException();
     }
 
@@ -220,16 +227,57 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
     @Inject(method = "handleBlockEntityData", at = @At("HEAD"), cancellable = true)
     private void flashbackNeoForgeFixed$preserveExactBlockEntityClientPacket(
             ClientboundBlockEntityDataPacket packet, CallbackInfo ci) {
+        ClientboundBlockEntityDataPacket replayPacket =
+                this.flashbackNeoForgeFixed$retargetBlockEntityPacket(packet);
+        ReplayServerCatchupExt replayState = (ReplayServerCatchupExt) this.replayServer;
+        replayState.flashbackNeoForgeFixed$cacheChunkBlockEntityUpdate(replayPacket);
         var viewers = this.replayServer.getReplayViewers();
-        if (this.replayServer.isProcessingSnapshot || viewers.isEmpty()) {
-            ((ReplayServerCatchupExt) this.replayServer)
-                    .flashbackNeoForgeFixed$queueForNewViewers(packet);
-        } else {
+        if (!this.replayServer.isProcessingSnapshot && !viewers.isEmpty()) {
             for (ServerPlayer viewer : viewers) {
-                viewer.connection.send(packet);
+                viewer.connection.send(replayPacket);
             }
         }
         ci.cancel();
+    }
+
+    @Unique
+    private ClientboundBlockEntityDataPacket flashbackNeoForgeFixed$retargetBlockEntityPacket(
+            ClientboundBlockEntityDataPacket packet) {
+        BlockEntity blockEntity = this.level().getChunkAt(packet.getPos()).getBlockEntity(
+                packet.getPos(), net.minecraft.world.level.chunk.LevelChunk.EntityCreationType.IMMEDIATE);
+        if (blockEntity == null || blockEntity.getType() == packet.getType()) {
+            return packet;
+        }
+        return this.flashbackNeoForgeFixed$createRetargetedBlockEntityPacket(
+                packet.getPos(), packet.getType(), blockEntity.getType(), packet.getTag());
+    }
+
+    @Unique
+    private ClientboundBlockEntityDataPacket flashbackNeoForgeFixed$createRetargetedBlockEntityPacket(
+            net.minecraft.core.BlockPos pos,
+            BlockEntityType<?> recordedType,
+            BlockEntityType<?> actualType,
+            net.minecraft.nbt.CompoundTag tag) {
+        return InvokerClientboundBlockEntityDataPacket.flashbackNeoForgeFixed$create(
+                pos.immutable(), actualType, tag.copy());
+    }
+
+    // Cache the recorded tags before Flashback applies the chunk to its fake server. Applying the
+    // chunk can synchronously make the server send a reconstructed chunk to the viewer; caching at
+    // TAIL is therefore too late for the connection-ordering hook below.
+    @Inject(method = "handleLevelChunkWithLight", at = @At("HEAD"))
+    private void flashbackNeoForgeFixed$cacheChunkBlockEntityClientTagsBeforeApply(
+            ClientboundLevelChunkWithLightPacket packet, CallbackInfo ci) {
+        packet.getChunkData().getBlockEntitiesTagsConsumer(packet.getX(), packet.getZ()).accept(
+                (pos, type, tag) -> {
+                    if (tag != null) {
+                        ((ReplayServerCatchupExt) this.replayServer)
+                                .flashbackNeoForgeFixed$cacheChunkBlockEntityUpdate(
+                                        InvokerClientboundBlockEntityDataPacket
+                                                .flashbackNeoForgeFixed$create(
+                                                        pos.immutable(), type, tag.copy()));
+                    }
+                });
     }
 
     // Chunk snapshots already contain each client block entity's exact update tag. Flashback loads
@@ -243,11 +291,28 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
                     if (tag == null) {
                         return;
                     }
+                    BlockEntity blockEntity = this.level().getChunkAt(pos).getBlockEntity(
+                            pos, net.minecraft.world.level.chunk.LevelChunk.EntityCreationType.IMMEDIATE);
+                    BlockEntityType<?> actualType = blockEntity == null
+                            ? type
+                            : blockEntity.getType();
                     ClientboundBlockEntityDataPacket exact =
-                            InvokerClientboundBlockEntityDataPacket.flashbackNeoForgeFixed$create(
-                                    pos.immutable(), type, tag.copy());
+                            actualType == type
+                                    ? InvokerClientboundBlockEntityDataPacket
+                                            .flashbackNeoForgeFixed$create(
+                                                    pos.immutable(), type, tag.copy())
+                                    : this.flashbackNeoForgeFixed$createRetargetedBlockEntityPacket(
+                                            pos, type, actualType, tag);
                     ((ReplayServerCatchupExt) this.replayServer)
-                            .flashbackNeoForgeFixed$queueForNewViewers(exact);
+                            .flashbackNeoForgeFixed$cacheChunkBlockEntityUpdate(exact);
+                    // Live timeline updates may go straight through. Snapshot tags are published as
+                    // one final image only after ReplayReader has completed every chunk, otherwise
+                    // an early chunk can race a later seek and make the visible material alternate.
+                    if (!this.replayServer.isProcessingSnapshot) {
+                        for (ServerPlayer viewer : this.replayServer.getReplayViewers()) {
+                            viewer.connection.send(exact);
+                        }
+                    }
                 });
     }
 

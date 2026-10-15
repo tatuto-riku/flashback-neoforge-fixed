@@ -28,6 +28,7 @@ public final class ReplayDeferredEntityPayloads {
     private static final int MAX_WAIT_TICKS = 200;
     private static final List<PendingPayload> PENDING = new ArrayList<>();
     private static final Set<Integer> COMPLEX_SPAWN_READY = ConcurrentHashMap.newKeySet();
+    private static final Set<String> FAILED_HANDLER_TYPES = ConcurrentHashMap.newKeySet();
 
     private static ClientLevel activeLevel;
     private static boolean redispatching;
@@ -38,6 +39,7 @@ public final class ReplayDeferredEntityPayloads {
     public static synchronized void reset() {
         PENDING.clear();
         COMPLEX_SPAWN_READY.clear();
+        FAILED_HANDLER_TYPES.clear();
         activeLevel = null;
         redispatching = false;
     }
@@ -113,7 +115,33 @@ public final class ReplayDeferredEntityPayloads {
 
         try {
             for (PendingPayload pending : ready) {
-                pending.packet().handle(pending.listener());
+                try {
+                    pending.packet().handle(pending.listener());
+                } catch (RuntimeException | LinkageError exception) {
+                    // The target entity existing does not guarantee that a mod has finished
+                    // constructing all of its attached client state. For example, Mowzie's Mobs
+                    // resolves an ability instance from a player capability and dereferences it
+                    // without a null check. A replay can legitimately lack that transient instance,
+                    // and one optional visual/state transition must not terminate all playback.
+                    //
+                    // Do not retry generically: a handler may have performed side effects before
+                    // throwing, so replaying it could duplicate or reorder later recorded state.
+                    // Keep fatal VM errors visible, but isolate ordinary third-party handler and
+                    // linkage failures per packet.
+                    String payloadType = pending.packet().payload().type().id().toString();
+                    if (FAILED_HANDLER_TYPES.add(payloadType)) {
+                        LOGGER.warn(
+                                "Discarding replay payload {} for entity {} because its handler "
+                                        + "failed; further failures of this type will be logged "
+                                        + "without a stack trace",
+                                payloadType, pending.entityId(), exception);
+                    } else {
+                        LOGGER.warn(
+                                "Discarding replay payload {} for entity {} after another handler "
+                                        + "failure: {}",
+                                payloadType, pending.entityId(), exception.toString());
+                    }
+                }
             }
         } finally {
             synchronized (ReplayDeferredEntityPayloads.class) {

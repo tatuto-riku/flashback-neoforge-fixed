@@ -7,7 +7,8 @@
 Compatibility fixes for running [Flashback](https://modrinth.com/mod/flashback) on
 NeoForge 1.21.1 through Sinytra Connector. The mod preserves modded packets and replay
 snapshot state, with additional compatibility for Create, Sable-based sub-levels,
-Create: Aeronautics, Create: Cosmonautics, Voxy, and several rendering integrations.
+Create: Aeronautics, Create: Cosmonautics, Immersive Vehicles, Voxy, and several
+rendering integrations.
 
 <img src="./images/aeronautics.png">
 
@@ -58,6 +59,32 @@ decoded against an accidentally emptied species registry.
 Legacy recordings whose NeoForge registry metadata cannot distinguish simple and multi-state
 Copycats block entities recover their recorded material across every active part. This prevents
 Copycat Bytes and similar blocks from crashing Sodium's chunk builder when a replay is opened.
+Replay chunk loading now applies valid block-entity tags (including Copycats materials) normally
+and isolates only the individual incompatible tag instead of blanking every block entity in a chunk.
+Legacy block-entity updates are retargeted to the type created by the decoded block state, so a
+numeric registry mismatch cannot make the client silently reject Copycats material data.
+Large snapshot catch-up queues are delivered in small ordered batches to avoid periodic frame stalls.
+
+Immersive Vehicles entities store their actual vehicle definition in a follow-up server handshake,
+not in the vanilla entity spawn packet. New recordings preserve one complete handshake per vehicle
+in every replay snapshot. Essential's current online emote state is ignored while viewing a replay,
+so an emote performed at the end cannot be projected over the entire timeline.
+
+Normal Cobblemon spawning is disabled inside Flashback's registry-light replay server. It remains
+unchanged in ordinary integrated and dedicated worlds.
+
+Large replay chunk caches are indexed on disk and decoded one requested chunk at a time. This avoids
+Flashback temporarily retaining thousands of decoded chunk packets, preserves cache IDs when one
+entry is invalid, and forces complete snapshot chunks back to replacement or post-seek viewers.
+
+A client-only or version-incompatible block entity update can no longer abort its complete replay
+chunk; the exact client tag is still delivered while only the ReplayServer mirror isolates the
+failing tag. Snapshot catch-up packets use bounded-lifetime storage, and synthetic replay players
+do not run location advancement checks that could generate unrecorded terrain.
+
+Recorded vanilla and NeoForge container-open packets are ignored during playback. Inventory or
+machine screens used by the recorded player are not part of the replay camera, and reopening them
+could initialize recipe viewers synchronously before replay recipe synchronization is available.
 
 Legacy `Create: Flashback` and `Create: Aeronautics Flashback` installations are not
 required because their compatibility features are included here. Version 1.0.9 and newer

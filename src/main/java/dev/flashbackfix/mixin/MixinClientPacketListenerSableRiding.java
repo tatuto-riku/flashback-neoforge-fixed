@@ -1,5 +1,6 @@
 package dev.flashbackfix.mixin;
 
+import com.moulberry.flashback.playback.ReplayServer;
 import dev.flashbackfix.FlashbackNeoForgeFixed;
 import dev.flashbackfix.compat.BlockEntityPacketSnapshotCache;
 import dev.flashbackfix.compat.InboundPayloadCapture;
@@ -21,6 +22,7 @@ import net.minecraft.network.protocol.game.ClientboundRespawnPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -34,6 +36,28 @@ public class MixinClientPacketListenerSableRiding {
     private void flashbackNeoForgeFixed$cacheExactBlockEntityState(
             ClientboundBlockEntityDataPacket packet, CallbackInfo ci) {
         BlockEntityPacketSnapshotCache.capture(Minecraft.getInstance().level, packet);
+    }
+
+    @Inject(method = "handleBlockEntityData", at = @At("RETURN"))
+    private void flashbackNeoForgeFixed$rebuildReplayCopycatModel(
+            ClientboundBlockEntityDataPacket packet, CallbackInfo ci) {
+        Minecraft minecraft = Minecraft.getInstance();
+        ClientLevel level = minecraft.level;
+        if (level == null || !(minecraft.getSingleplayerServer() instanceof ReplayServer)) {
+            return;
+        }
+        BlockEntity blockEntity = level.getBlockEntity(packet.getPos());
+        if (blockEntity == null || !blockEntity.getClass().getName()
+                .startsWith("com.copycatsplus.copycats.")) {
+            return;
+        }
+
+        // Copycats' material lives in NeoForge ModelData. Sodium can otherwise keep the mesh it
+        // built from the empty material while the exact replay tag is arriving, producing either
+        // an empty copycat or both old and new meshes until an unrelated later chunk rebuild.
+        blockEntity.requestModelDataUpdate();
+        var state = blockEntity.getBlockState();
+        minecraft.levelRenderer.setBlockDirty(packet.getPos(), state, state);
     }
 
     @Inject(method = "handleMoveEntity", at = @At("HEAD"))

@@ -39,6 +39,7 @@ public final class ModdedPayloadSnapshotCache {
     private static final Logger LOGGER = LoggerFactory.getLogger("FlashbackNeoForgeFixed");
     private static final int MAX_ENTRIES = 2048;
     private static final String CREATE_RAIL_GRAPH_SYNC = "create:sync_rail_graph";
+    private static final String IMMERSIVE_VEHICLES_CHANNEL = "mts:main";
     private static final Map<PayloadKey, CachedPayload> LATEST = new LinkedHashMap<>();
     /**
      * Some protocols build one logical state from an ordered packet series rather than replacing it
@@ -206,6 +207,11 @@ public final class ModdedPayloadSnapshotCache {
                 || namespace.equals("sable")
                 || namespace.equals("flashback")
                 || namespace.equals(FlashbackNeoForgeFixed.MODID)
+                // Every Immersive Vehicles packet shares this one channel. Treating it as a
+                // last-value state packet retains one arbitrary vehicle/movement command and loses
+                // all other entities. ImmersiveVehiclesReplayCompat synthesizes a full handshake
+                // snapshot per wrapper entity instead; live timeline packets remain recorded.
+                || IMMERSIVE_VEHICLES_CHANNEL.equals(id.toString())
                 || ReplayPayloadPolicy.isTransientClientEffect(id)
                 || ReplayPayloadPolicy.isConnectionScoped(id);
     }

@@ -1,11 +1,13 @@
 package dev.flashbackfix.compat;
 
+import com.moulberry.flashback.playback.ReplayServer;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import net.minecraft.client.Minecraft;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.client.model.data.ModelData;
@@ -40,6 +42,13 @@ public final class CopycatsLegacyReplayCompat {
 
             Object materials = getModelProperty(data, materialsField.get(null));
             Map<?, ?> materialMap = materials instanceof Map<?, ?> map ? map : Map.of();
+            if (Minecraft.getInstance().getSingleplayerServer() instanceof ReplayServer
+                    && !materialMap.isEmpty()) {
+                // Chunk meshing runs off-thread. Never let one mesh observe Copycats' live material
+                // map halfway through a replay packet update; that is how an old empty material and
+                // the recorded material can be baked into the same visible section.
+                materialMap = new LinkedHashMap<>(materialMap);
+            }
             Object simpleMaterial = getModelProperty(data, materialField.get(null));
             return repairMaterialKeys(materialMap, simpleMaterial, state);
         } catch (ClassNotFoundException | NoSuchFieldException | IllegalAccessException exception) {

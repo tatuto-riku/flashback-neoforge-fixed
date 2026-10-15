@@ -12,6 +12,7 @@ import dev.flashbackfix.compat.SableCompat;
 import dev.flashbackfix.compat.BlockEntityPacketSnapshotCache;
 import dev.flashbackfix.compat.CreateContraptionSnapshotCompat;
 import dev.flashbackfix.compat.InboundPayloadCapture;
+import dev.flashbackfix.compat.ImmersiveVehiclesReplayCompat;
 import dev.flashbackfix.compat.ModdedPayloadSnapshotCache;
 import io.netty.buffer.ByteBuf;
 import java.util.ArrayList;
@@ -262,6 +263,11 @@ public class MixinRecorder {
                 LOGGER.error("Failed to capture Sable sub-level snapshots", e);
             }
         }
+
+        // Immersive Vehicles' vanilla wrapper spawn contains no vehicle definition. Its live client
+        // asks the real server for that NBT after spawning, so synthesize the same response while
+        // the fully initialized client entity is still available to the recorder.
+        ImmersiveVehiclesReplayCompat.appendSnapshotTasks(level, tasks);
 
         // Preserve last-known modded client state that arrived before recording began. This runs
         // after normal entity/chunk snapshot submission so entity-addressed payloads resolve when
