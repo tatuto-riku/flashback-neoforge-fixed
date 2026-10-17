@@ -2,6 +2,9 @@ package dev.flashbackfix.mixin;
 
 import dev.flashbackfix.compat.InboundPayloadCapture;
 import dev.flashbackfix.compat.ReplayDeferredEntityPayloads;
+import dev.flashbackfix.compat.ReplayPayloadPolicy;
+import com.moulberry.flashback.playback.ReplayServer;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientCommonPacketListenerImpl;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
@@ -18,6 +21,17 @@ public class MixinClientCommonPacketListenerModdedState {
             at = @At("HEAD"), cancellable = true)
     private void flashbackNeoForgeFixed$cacheModdedClientState(
             ClientboundCustomPayloadPacket packet, CallbackInfo ci) {
+        // Enforce replay policy at the final client dispatch boundary as well. Older recordings and
+        // Connector-capable vanilla packet batches can reach this method without going through our
+        // custom action. This also rejects invalid session references freshly synthesized by a
+        // data-less ReplayServer.
+        if (Minecraft.getInstance().getSingleplayerServer() instanceof ReplayServer
+                && (ReplayPayloadPolicy.isTransientClientEffect(packet.payload().type().id())
+                || ReplayPayloadPolicy.isConnectionScoped(packet.payload().type().id()))) {
+            InboundPayloadCapture.discard(packet.payload());
+            ci.cancel();
+            return;
+        }
         if ((Object) this instanceof ClientPacketListener listener) {
             boolean deferred;
             try {

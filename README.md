@@ -37,59 +37,6 @@ Flashback's config file before starting a recording: open `config/flashback/flas
 (the `config` folder next to your `mods` folder) and set `"recordVoiceChat"` to `true`. Voice
 audio cannot be reconstructed in recordings made while it was disabled.
 
-Create: Cosmonautics' live universe simulation is disabled only inside Flashback's
-partial replay server, where the `rocketnautics:deep_space` dimension is intentionally
-absent. Normal worlds and dedicated servers continue to simulate it normally.
-
-Small mod-added pause-menu buttons keep their normal position unless they overlap Flashback's
-recording controls. A colliding button moves only to the next free slot on its right, while its
-vertical position remains unchanged.
-
-The title-screen replay-list button likewise keeps Flashback's original position. When a small
-control added after screen initialization occupies that slot, the late-added control moves down
-instead of pushing the replay-list button farther to the right.
-
-Create: The Air War 4.67's tooltip cache is also protected from concurrent creative-search
-updates when that optional mod is installed.
-
-Recorded custom payloads are forwarded to the replay client byte-for-byte. This preserves lazy
-data-registry synchronization used by Cobblemon and prevents later battle packets from being
-decoded against an accidentally emptied species registry.
-
-Legacy recordings whose NeoForge registry metadata cannot distinguish simple and multi-state
-Copycats block entities recover their recorded material across every active part. This prevents
-Copycat Bytes and similar blocks from crashing Sodium's chunk builder when a replay is opened.
-Replay chunk loading now applies valid block-entity tags (including Copycats materials) normally
-and isolates only the individual incompatible tag instead of blanking every block entity in a chunk.
-Legacy block-entity updates are retargeted to the type created by the decoded block state, so a
-numeric registry mismatch cannot make the client silently reject Copycats material data.
-Large snapshot catch-up queues are delivered in small ordered batches to avoid periodic frame stalls.
-
-Immersive Vehicles entities store their actual vehicle definition in a follow-up server handshake,
-not in the vanilla entity spawn packet. New recordings preserve one complete handshake per vehicle
-in every replay snapshot. Essential's current online emote state is ignored while viewing a replay,
-so an emote performed at the end cannot be projected over the entire timeline.
-
-Normal Cobblemon spawning is disabled inside Flashback's registry-light replay server. It remains
-unchanged in ordinary integrated and dedicated worlds.
-
-Large replay chunk caches are indexed on disk and decoded one requested chunk at a time. This avoids
-Flashback temporarily retaining thousands of decoded chunk packets, preserves cache IDs when one
-entry is invalid, and forces complete snapshot chunks back to replacement or post-seek viewers.
-
-A client-only or version-incompatible block entity update can no longer abort its complete replay
-chunk; the exact client tag is still delivered while only the ReplayServer mirror isolates the
-failing tag. Snapshot catch-up packets use bounded-lifetime storage, and synthetic replay players
-do not run location advancement checks that could generate unrecorded terrain.
-
-Recorded vanilla and NeoForge container-open packets are ignored during playback. Inventory or
-machine screens used by the recorded player are not part of the replay camera, and reopening them
-could initialize recipe viewers synchronously before replay recipe synchronization is available.
-
-Legacy `Create: Flashback` and `Create: Aeronautics Flashback` installations are not
-required because their compatibility features are included here. Version 1.0.9 and newer
-will tolerate those legacy mods, but removing them avoids duplicate replay handlers.
-
 <h1>Compatibility</h1>
 
 <p align="center">

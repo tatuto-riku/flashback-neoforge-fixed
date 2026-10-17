@@ -5,8 +5,10 @@ import com.moulberry.flashback.playback.ReplayPlayer;
 import com.moulberry.flashback.playback.ReplayServer;
 import com.moulberry.flashback.TempFolderProvider;
 import dev.flashbackfix.ext.ReplayGamePacketHandlerComplexSpawnExt;
+import dev.flashbackfix.ext.ReplayGamePacketHandlerPowerGridExt;
 import dev.flashbackfix.ext.ReplayServerCatchupExt;
 import dev.flashbackfix.ext.ReplayServerComplexSpawnExt;
+import dev.flashbackfix.ext.ReplayServerPowerGridExt;
 import dev.flashbackfix.ext.ReplayServerRegistryExt;
 import dev.flashbackfix.compat.ReplayRegistryCompat;
 import dev.flashbackfix.compat.ReplayChunkBlockEntityLoadScope;
@@ -24,6 +26,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
@@ -53,7 +56,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ReplayServer.class)
 public class MixinReplayServer implements ReplayServerComplexSpawnExt, ReplayServerCatchupExt,
-        ReplayServerRegistryExt {
+        ReplayServerRegistryExt, ReplayServerPowerGridExt {
 
     @Unique
     private static final Logger FLASHBACK_NEOFORGE_FIXED$LOGGER =
@@ -146,6 +149,13 @@ public class MixinReplayServer implements ReplayServerComplexSpawnExt, ReplaySer
                 .flashbackNeoForgeFixed$applyComplexSpawnData(entityId, data);
     }
 
+    @Override
+    public void flashbackNeoForgeFixed$applyPowerGridEntityData(
+            int entityId, CompoundTag data) {
+        ((ReplayGamePacketHandlerPowerGridExt) this.gamePacketHandler)
+                .flashbackNeoForgeFixed$applyPowerGridEntityData(entityId, data);
+    }
+
     // Actions embedded in the file's initial snapshot get processed on the replay server's very first
     // tick, before any client has had time to finish connecting - so forwarding them straight to
     // "whoever is watching right now" (ActionModdedPayload/ActionForwardedGamePacket's normal behaviour)
@@ -225,6 +235,8 @@ public class MixinReplayServer implements ReplayServerComplexSpawnExt, ReplaySer
      */
     @Inject(method = "clearDataForPlayingSnapshot", at = @At("HEAD"))
     private void flashbackNeoForgeFixed$beginCompleteSnapshotReplacement(CallbackInfo ci) {
+        ((ReplayGamePacketHandlerPowerGridExt) this.gamePacketHandler)
+                .flashbackNeoForgeFixed$resetPowerGridEntityData();
         if (this.flashbackNeoForgeFixed$viewerCatchupBacklog != null) {
             this.flashbackNeoForgeFixed$viewerCatchupBacklog.clear();
         }
