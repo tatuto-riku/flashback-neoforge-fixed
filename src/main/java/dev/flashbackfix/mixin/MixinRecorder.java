@@ -14,6 +14,8 @@ import dev.flashbackfix.compat.CreateContraptionSnapshotCompat;
 import dev.flashbackfix.compat.InboundPayloadCapture;
 import dev.flashbackfix.compat.ImmersiveVehiclesReplayCompat;
 import dev.flashbackfix.compat.ModdedPayloadSnapshotCache;
+import dev.flashbackfix.compat.PowerGridReplayCompat;
+import dev.flashbackfix.compat.ReplayPayloadPolicy;
 import io.netty.buffer.ByteBuf;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -269,6 +271,11 @@ public class MixinRecorder {
         // the fully initialized client entity is still available to the recorder.
         ImmersiveVehiclesReplayCompat.appendSnapshotTasks(level, tasks);
 
+        // PowerGrid multiplexes every wire through powergrid:s2c, so the generic last-value cache
+        // can retain only one arbitrary wire. Record an independently addressable state image for
+        // every existing wire while the initialized client entities are still available.
+        PowerGridReplayCompat.appendSnapshotTasks(level, tasks);
+
         // Preserve last-known modded client state that arrived before recording began. This runs
         // after normal entity/chunk snapshot submission so entity-addressed payloads resolve when
         // the snapshot is replayed.
@@ -285,6 +292,19 @@ public class MixinRecorder {
             Packet<?> packet, ConnectionProtocol phase, CallbackInfo ci) {
         if (packet instanceof ClientboundCustomPayloadPacket customPayloadPacket) {
             CustomPacketPayload payload = customPayloadPacket.payload();
+            // A one-shot UI response has no durable replay state. In particular, Cobblemon closes
+            // its interaction wheel locally, so recording only the server's open response leaves
+            // the replay viewer permanently stuck in that wheel. Old recordings are protected by
+            // the matching playback-side policy in ActionModdedPayload.
+            if (ReplayPayloadPolicy.isTransientClientEffect(payload.type().id())
+                    || ReplayPayloadPolicy.isConnectionScoped(payload.type().id())) {
+                // The packet must still replace its queued placeholder. Merely returning here
+                // leaves it in Flashback's ordinary game-packet batch; Connector can encode that
+                // batch successfully, bypassing ActionModdedPayload's playback policy entirely.
+                this.flashbackNeoForgeFixed$orderedPacketWrites().put(packet, writer -> {
+                });
+                return;
+            }
             if (NetworkRegistry.getCodec(payload.type().id(), phase, PacketFlow.CLIENTBOUND) != null) {
                 // Use the immutable bytes copied by PacketDecoder. Re-encoding a received payload
                 // can consume a lazy/one-shot buffer that its actual client handler still needs.

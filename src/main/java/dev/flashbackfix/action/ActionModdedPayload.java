@@ -5,9 +5,11 @@ import com.moulberry.flashback.io.ReplayWriter;
 import com.moulberry.flashback.playback.ReplayServer;
 import dev.flashbackfix.compat.ReplayComplexSpawnPairing;
 import dev.flashbackfix.compat.ReplayPayloadPolicy;
+import dev.flashbackfix.compat.PowerGridReplayCompat;
 import dev.flashbackfix.compat.ReplayWirePayload;
 import dev.flashbackfix.ext.ReplayServerCatchupExt;
 import dev.flashbackfix.ext.ReplayServerComplexSpawnExt;
+import dev.flashbackfix.ext.ReplayServerPowerGridExt;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import java.lang.reflect.Field;
@@ -172,6 +174,17 @@ public class ActionModdedPayload implements Action {
 
         byte[] encodedBytes = new byte[buf.readableBytes()];
         buf.readBytes(encodedBytes);
+
+        // PowerGrid's vanilla add-entity packet intentionally omits the wire item/endpoints. Apply
+        // its recorded EntityData packet to Flashback's fake-server copy before entity tracking asks
+        // PowerGrid to serialize that state again. The exact bytes are still forwarded below so
+        // ordinary timeline updates reach the physical replay client as well.
+        PowerGridReplayCompat.EntityData powerGridData =
+                PowerGridReplayCompat.decodeEntityData(id, encodedBytes);
+        if (powerGridData != null) {
+            ((ReplayServerPowerGridExt) replayServer).flashbackNeoForgeFixed$applyPowerGridEntityData(
+                    powerGridData.entityId(), powerGridData.data());
+        }
 
         // Most mod payloads are deliberately opaque on the replay server. A codec round-trip is not
         // guaranteed to preserve them: some decoders keep a lazy buffer while their encoder reads a

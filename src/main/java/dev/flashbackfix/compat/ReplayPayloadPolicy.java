@@ -7,6 +7,11 @@ import net.minecraft.resources.ResourceLocation;
 public final class ReplayPayloadPolicy {
 
     private static final Set<ResourceLocation> CONNECTION_SCOPED = Set.of(
+            // The replay server has no copy of the recorded player's Cobblemon storage. Reusing its
+            // UUID makes ClientStorageManager select a store that was never synchronized and throws
+            // asynchronously on the render thread. Pokemon entities carry their own visible state;
+            // the viewer's party selection is neither required nor valid during playback.
+            id("cobblemon", "set_party_reference"),
             id("rctmod", "player_state"),
             id("rctmod", "trainer_manager"),
             id("rctmod", "file_download"));
@@ -18,6 +23,10 @@ public final class ReplayPayloadPolicy {
      * excluding its namespace, so a future persistent-state packet is not silently discarded.
      */
     private static final Set<ResourceLocation> TRANSIENT_CLIENT_EFFECTS = Set.of(
+            // Cobblemon closes this radial interaction menu entirely on the original client. The
+            // close event therefore has no matching server packet to record; replaying the open
+            // response would leave the viewer trapped in the menu for the rest of playback.
+            id("cobblemon", "interact_pokemon_ui"),
             id("sablecleanup", "open_sable_list"),
             id("sablecleanup", "diagram_too_large"),
             id("sablecleanup", "diagram_data"),

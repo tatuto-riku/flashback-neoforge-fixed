@@ -3,23 +3,31 @@ package dev.flashbackfix.mixin;
 import com.moulberry.flashback.playback.ReplayGamePacketHandler;
 import com.moulberry.flashback.playback.ReplayServer;
 import dev.flashbackfix.compat.CreateContraptionSnapshotCompat;
+import dev.flashbackfix.compat.PowerGridReplayCompat;
 import dev.flashbackfix.compat.ReplayComplexSpawnPairing;
 import dev.flashbackfix.ext.ReplayGamePacketHandlerComplexSpawnExt;
+import dev.flashbackfix.ext.ReplayGamePacketHandlerPowerGridExt;
 import dev.flashbackfix.ext.ReplayServerCatchupExt;
 import io.netty.buffer.Unpooled;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
+import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
@@ -45,7 +53,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * still sitting in the pending-entities map from the same snapshot/tick batch.
  */
 @Mixin(ReplayGamePacketHandler.class)
-public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComplexSpawnExt {
+public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComplexSpawnExt,
+        ReplayGamePacketHandlerPowerGridExt {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("FlashbackNeoForgeFixed");
     private static final Set<String> LOGGED_ENTITY_DATA_SCHEMA_MISMATCHES =
@@ -53,6 +62,9 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
 
     @Unique
     private Set<Entity> flashbackNeoForgeFixed$deferredComplexSpawns;
+
+    @Unique
+    private Map<Integer, CompoundTag> flashbackNeoForgeFixed$pendingPowerGridEntityData;
 
     @Shadow
     @Final
@@ -81,6 +93,33 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Apply timeline riding relationships on the physical client in their exact recorded order.
+     * Reconstructing them in the fake server delays the vanilla passengers packet until entity
+     * tracking runs, while the following modded seat packet is forwarded immediately. Cobblemon
+     * then observes the seat update before the passenger exists and the recorded player is rendered
+     * beside the Pokemon. Snapshot relationships still use Flashback's normal fake-server path so
+     * a viewer joining after snapshot processing receives them from ordinary entity pairing.
+     */
+    @Inject(method = "handleSetEntityPassengersPacket", at = @At("HEAD"), cancellable = true)
+    private void flashbackNeoForgeFixed$forwardTimelinePassengersInRecordedOrder(
+            ClientboundSetPassengersPacket packet, CallbackInfo ci) {
+        if (this.replayServer.isProcessingSnapshot) {
+            return;
+        }
+
+        ReplayServerCatchupExt catchup = (ReplayServerCatchupExt) this.replayServer;
+        var viewers = this.replayServer.getReplayViewers();
+        if (viewers.isEmpty()) {
+            catchup.flashbackNeoForgeFixed$queueForNewViewers(packet);
+        } else if (!catchup.flashbackNeoForgeFixed$deferUntilSnapshotDelivered(packet)) {
+            for (ServerPlayer viewer : viewers) {
+                viewer.connection.send(packet);
+            }
+        }
+        ci.cancel();
+    }
+
     @Unique
     private Set<Entity> flashbackNeoForgeFixed$deferredComplexSpawns() {
         if (this.flashbackNeoForgeFixed$deferredComplexSpawns == null) {
@@ -88,6 +127,14 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
                     Collections.newSetFromMap(new IdentityHashMap<>());
         }
         return this.flashbackNeoForgeFixed$deferredComplexSpawns;
+    }
+
+    @Unique
+    private Map<Integer, CompoundTag> flashbackNeoForgeFixed$pendingPowerGridEntityData() {
+        if (this.flashbackNeoForgeFixed$pendingPowerGridEntityData == null) {
+            this.flashbackNeoForgeFixed$pendingPowerGridEntityData = new HashMap<>();
+        }
+        return this.flashbackNeoForgeFixed$pendingPowerGridEntityData;
     }
 
     /**
@@ -98,6 +145,14 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
             target = "Lnet/minecraft/server/level/ServerLevel;addFreshEntity(Lnet/minecraft/world/entity/Entity;)Z"))
     private boolean flashbackNeoForgeFixed$deferUninitializedComplexSpawn(
             ServerLevel level, Entity entity) {
+        if (PowerGridReplayCompat.isUninitializedWire(entity)) {
+            if (this.flashbackNeoForgeFixed$deferredComplexSpawns().add(entity)) {
+                LOGGER.warn("Deferring replay PowerGrid wire {} ({}) until its entity data arrives",
+                        entity.getId(), entity.getType());
+            }
+            return false;
+        }
+
         if (entity instanceof IEntityWithComplexSpawn complexSpawn) {
             try {
                 flashbackNeoForgeFixed$validateComplexSpawnRoundTrip(entity, complexSpawn);
@@ -112,6 +167,71 @@ public class MixinReplayGamePacketHandler implements ReplayGamePacketHandlerComp
 
         this.flashbackNeoForgeFixed$deferredComplexSpawns().remove(entity);
         return level.addFreshEntity(entity);
+    }
+
+    @Inject(method = "handleAddEntity", at = @At("TAIL"))
+    private void flashbackNeoForgeFixed$applyDeferredPowerGridDataOnSpawn(
+            ClientboundAddEntityPacket packet, CallbackInfo ci) {
+        CompoundTag data = this.flashbackNeoForgeFixed$pendingPowerGridEntityData()
+                .remove(packet.getId());
+        if (data != null) {
+            this.flashbackNeoForgeFixed$applyPowerGridEntityData(packet.getId(), data);
+        }
+    }
+
+    @Inject(method = "handleRemoveEntities", at = @At("HEAD"))
+    private void flashbackNeoForgeFixed$discardRemovedPowerGridData(
+            ClientboundRemoveEntitiesPacket packet, CallbackInfo ci) {
+        if (this.flashbackNeoForgeFixed$pendingPowerGridEntityData == null) {
+            return;
+        }
+        packet.getEntityIds().forEach(
+                (int id) -> this.flashbackNeoForgeFixed$pendingPowerGridEntityData.remove(id));
+    }
+
+    @Override
+    public void flashbackNeoForgeFixed$applyPowerGridEntityData(
+            int entityId, CompoundTag data) {
+        Entity entity = this.getEntityOrPending(entityId);
+        if (entity == null) {
+            this.flashbackNeoForgeFixed$pendingPowerGridEntityData().put(entityId, data.copy());
+            return;
+        }
+        if (!PowerGridReplayCompat.isWire(entity)) {
+            LOGGER.warn("Ignoring PowerGrid entity data for non-wire replay entity {} ({})",
+                    entityId, entity.getType());
+            return;
+        }
+
+        boolean wasPending = this.pendingEntities.get(entityId) == entity;
+        try {
+            PowerGridReplayCompat.applyEntityData(entity, data);
+            this.flashbackNeoForgeFixed$pendingPowerGridEntityData().remove(entityId);
+            this.flashbackNeoForgeFixed$deferredComplexSpawns().remove(entity);
+            if (wasPending) {
+                this.flushPendingEntities();
+            }
+        } catch (RuntimeException exception) {
+            this.flashbackNeoForgeFixed$pendingPowerGridEntityData().remove(entityId);
+            this.flashbackNeoForgeFixed$deferredComplexSpawns().remove(entity);
+            if (wasPending) {
+                this.pendingEntities.remove(entityId);
+            }
+            entity.discard();
+            LOGGER.error("Rejected invalid PowerGrid wire data for replay entity {} before pairing",
+                    entityId, exception);
+        }
+    }
+
+    @Override
+    public void flashbackNeoForgeFixed$resetPowerGridEntityData() {
+        if (this.flashbackNeoForgeFixed$pendingPowerGridEntityData != null) {
+            this.flashbackNeoForgeFixed$pendingPowerGridEntityData.clear();
+        }
+        if (this.flashbackNeoForgeFixed$deferredComplexSpawns != null) {
+            this.flashbackNeoForgeFixed$deferredComplexSpawns.removeIf(
+                    PowerGridReplayCompat::isWire);
+        }
     }
 
     /** Flashback normally clears every pending entity even when insertion was deliberately deferred. */

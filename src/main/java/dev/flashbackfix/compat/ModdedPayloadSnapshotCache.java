@@ -40,6 +40,7 @@ public final class ModdedPayloadSnapshotCache {
     private static final int MAX_ENTRIES = 2048;
     private static final String CREATE_RAIL_GRAPH_SYNC = "create:sync_rail_graph";
     private static final String IMMERSIVE_VEHICLES_CHANNEL = "mts:main";
+    private static final String POWERGRID_CHANNEL = "powergrid:s2c";
     private static final Map<PayloadKey, CachedPayload> LATEST = new LinkedHashMap<>();
     /**
      * Some protocols build one logical state from an ordered packet series rather than replacing it
@@ -212,6 +213,9 @@ public final class ModdedPayloadSnapshotCache {
                 // all other entities. ImmersiveVehiclesReplayCompat synthesizes a full handshake
                 // snapshot per wrapper entity instead; live timeline packets remain recorded.
                 || IMMERSIVE_VEHICLES_CHANNEL.equals(id.toString())
+                // PowerGrid multiplexes every message and every wire through one channel. Its
+                // dedicated compatibility layer emits one complete EntityData packet per wire.
+                || POWERGRID_CHANNEL.equals(id.toString())
                 || ReplayPayloadPolicy.isTransientClientEffect(id)
                 || ReplayPayloadPolicy.isConnectionScoped(id);
     }
@@ -356,16 +360,26 @@ public final class ModdedPayloadSnapshotCache {
                 }
             }
         }
-        for (String methodName : List.of("entityId", "getEntityId")) {
+        for (Method method : type.getMethods()) {
+            String name = method.getName().toLowerCase(java.util.Locale.ROOT);
+            // Kotlin/JVM payloads commonly expose `getEntity()` (Cobblemon's riding state) or
+            // `getVehicleEntityId()` (its seat assignment), while Java records usually expose
+            // `entityId()`. All are conventional entity targets and must wait for that entity.
+            boolean conventionalEntityId = name.equals("entity")
+                    || name.equals("getentity")
+                    || (name.contains("entity") && name.contains("id"));
+            if (!conventionalEntityId || method.getParameterCount() != 0
+                    || !(method.getReturnType() == int.class
+                    || method.getReturnType() == Integer.class
+                    || Number.class.isAssignableFrom(method.getReturnType()))) {
+                continue;
+            }
             try {
-                Method method = type.getMethod(methodName);
-                if (method.getParameterCount() == 0) {
-                    Object value = method.invoke(payload);
-                    if (value instanceof Number number) {
-                        return number.intValue();
-                    }
+                Object value = method.invoke(payload);
+                if (value instanceof Number number) {
+                    return number.intValue();
                 }
-            } catch (ReflectiveOperationException ignored) {
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
             }
         }
         return null;
