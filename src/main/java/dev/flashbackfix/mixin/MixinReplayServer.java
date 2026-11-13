@@ -246,6 +246,16 @@ public class MixinReplayServer implements ReplayServerComplexSpawnExt, ReplaySer
         if (this.flashbackNeoForgeFixed$chunkBlockEntityUpdates != null) {
             this.flashbackNeoForgeFixed$chunkBlockEntityUpdates.clear();
         }
+        // A seek replaces the replay world's entities. Keeping poses keyed by the previous entity
+        // instances makes runUpdates restore movement to an entity which is no longer the one sent
+        // to the viewer; the replacement player then appears stationary while movement particles
+        // continue at the recorded positions.
+        if (this.flashbackNeoForgeFixed$authoritativeEntityPoses != null) {
+            this.flashbackNeoForgeFixed$authoritativeEntityPoses.clear();
+        }
+        if (this.flashbackNeoForgeFixed$authoritativePoseUpdates != null) {
+            this.flashbackNeoForgeFixed$authoritativePoseUpdates.clear();
+        }
         this.flashbackNeoForgeFixed$snapshotBlockEntityUpdatesReady = false;
         this.flashbackNeoForgeFixed$snapshotDeliveryPending = true;
         this.flashbackNeoForgeFixed$snapshotBacklogRetentionTicks = 0;
