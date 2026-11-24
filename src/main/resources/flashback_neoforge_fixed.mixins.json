@@ -71,6 +71,8 @@
     "MixinWindowSuperResolutionReplay"
   ],
   "client": [
+    "MixinEditorHistorySetKeyframeTypeAdapter",
+    "MixinFlashbackAeroKeyframeTypeAdapter",
     "MixinImmersiveVehiclesBuilderReplay",
     "MixinImmersiveVehiclesHandshakeReplay",
     "MixinImmersiveVehiclesRenderForwarderReplay",
