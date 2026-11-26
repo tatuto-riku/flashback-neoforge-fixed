@@ -14,6 +14,12 @@ group = mod_group_id
 
 repositories {
     mavenLocal()
+    maven {
+        url = 'https://maven.bawnorton.com/releases'
+        content {
+            includeGroup 'com.github.bawnorton.mixinsquared'
+        }
+    }
 }
 
 base {
@@ -41,6 +47,15 @@ runs {
 
 dependencies {
     implementation "net.neoforged:neoforge:${neo_version}"
+
+    // Flashback 0.39.10 embeds MixinSquared Fabric 0.3.7-beta.1. Some native
+    // NeoForge mods (notably More Culling 1.0.11) still embed the NeoForge
+    // 0.2.0 wrapper, whose common classes are binary-incompatible with that
+    // Fabric plugin. Publishing the matching NeoForge wrapper lets JarJar's
+    // dependency resolver select one compatible common implementation.
+    jarJar implementation('com.github.bawnorton.mixinsquared:mixinsquared-neoforge:0.3.7-beta.1') {
+        transitive = false
+    }
 
     // Connector remaps Flashback's Fabric intermediary-mapped jar to official Mojang mappings before
     // loading it under NeoForge (see .cache/connector in a game instance running it); that remapped
